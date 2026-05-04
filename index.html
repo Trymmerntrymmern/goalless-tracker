@@ -31,6 +31,48 @@
           <p class="hint">Lower score wins</p>
         </div>
         <div class="leaderboard-grid" id="leaderboard"></div>
+        <div class="historical-summary" id="historicalSummary"></div>
+        <div class="season-stats" id="seasonStats"></div>
+      </section>
+
+      <section class="visual-section" aria-labelledby="visualTitle">
+        <div class="section-heading">
+          <div>
+            <p class="eyebrow">Form guide</p>
+            <h2 id="visualTitle">Performance trends</h2>
+          </div>
+          <p class="hint">Rolling averages, lower is better</p>
+        </div>
+        <div class="chart-grid">
+          <article class="chart-card chart-card-wide">
+            <div class="chart-heading">
+              <div>
+                <h3>Rolling score average</h3>
+                <p>10-round form with dashed long-term trend lines.</p>
+              </div>
+              <div class="chart-legend" id="trendLegend"></div>
+            </div>
+            <div class="chart-frame" id="trendChart"></div>
+          </article>
+          <article class="chart-card">
+            <div class="chart-heading">
+              <div>
+                <h3>Score gap</h3>
+                <p>Negative favours Trym, positive favours Nicolai.</p>
+              </div>
+            </div>
+            <div class="chart-frame compact-chart" id="gapChart"></div>
+          </article>
+          <article class="chart-card">
+            <div class="chart-heading">
+              <div>
+                <h3>Recent form</h3>
+                <p>Last 10 compared with the previous 10 rounds.</p>
+              </div>
+            </div>
+            <div class="trend-insights" id="trendInsights"></div>
+          </article>
+        </div>
       </section>
 
       <section class="entry-card" aria-labelledby="roundFormTitle">
@@ -64,7 +106,7 @@
 
           <div class="form-actions">
             <p class="save-message" id="saveMessage" role="status" aria-live="polite"></p>
-            <button class="primary-button" type="submit" id="saveRoundButton">Save round</button>
+            <p class="form-note">Each player can save their own score once for the selected date.</p>
           </div>
         </form>
       </section>
@@ -95,12 +137,13 @@
         </div>
 
         <div class="answers-list"></div>
+        <button class="primary-button player-save-button" type="button">Save score</button>
       </article>
     </template>
 
     <script type="module">
       import { initializeApp } from "https://www.gstatic.com/firebasejs/12.12.1/firebase-app.js";
-      import { getFirestore, collection, addDoc, getDocs, deleteDoc, doc, orderBy, query } from "https://www.gstatic.com/firebasejs/12.12.1/firebase-firestore.js";
+      import { getFirestore, collection, addDoc, getDocs, deleteDoc, doc, orderBy, query, runTransaction } from "https://www.gstatic.com/firebasejs/12.12.1/firebase-firestore.js";
 
       const firebaseConfig = {
         apiKey: "AIzaSyAuyjcvpGPd3BuQDfQkvgncvOFiFcwSj5U",
@@ -114,7 +157,7 @@
       const app = initializeApp(firebaseConfig);
       const db = getFirestore(app);
 
-      window.goallessFirebase = { db, collection, addDoc, getDocs, deleteDoc, doc, orderBy, query };
+      window.goallessFirebase = { db, collection, addDoc, getDocs, deleteDoc, doc, orderBy, query, runTransaction };
       import("./app.js");
     </script>
   </body>
