@@ -1,0 +1,121 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Goalless Tracker</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700;800;900&display=swap"
+      rel="stylesheet"
+    />
+    <link rel="stylesheet" href="style.css" />
+  </head>
+  <body>
+    <main class="app-shell">
+      <header class="app-header">
+        <div>
+          <p class="eyebrow">Daily football trivia</p>
+          <h1><span aria-hidden="true">&#9917;</span> Goalless Tracker</h1>
+        </div>
+        <div class="season-chip" id="roundCount">0 rounds</div>
+      </header>
+
+      <section class="scoreboard" aria-labelledby="leaderboardTitle">
+        <div class="section-heading">
+          <div>
+            <p class="eyebrow">Season table</p>
+            <h2 id="leaderboardTitle">Overall leaderboard</h2>
+          </div>
+          <p class="hint">Lower score wins</p>
+        </div>
+        <div class="leaderboard-grid" id="leaderboard"></div>
+      </section>
+
+      <section class="entry-card" aria-labelledby="roundFormTitle">
+        <div class="section-heading">
+          <div>
+            <p class="eyebrow">Add today's round</p>
+            <h2 id="roundFormTitle">New round</h2>
+          </div>
+          <button class="ghost-button" type="button" id="clearFormButton">Clear</button>
+        </div>
+
+        <form id="roundForm" class="round-form">
+          <div class="round-meta">
+            <label>
+              Date
+              <input type="date" id="roundDate" required />
+            </label>
+            <label>
+              Category
+              <input
+                type="text"
+                id="roundCategory"
+                placeholder="Premier League top scorers 2020/21"
+                autocomplete="off"
+                required
+              />
+            </label>
+          </div>
+
+          <div class="players-grid" id="playerForms"></div>
+
+          <div class="form-actions">
+            <p class="save-message" id="saveMessage" role="status" aria-live="polite"></p>
+            <button class="primary-button" type="submit" id="saveRoundButton">Save round</button>
+          </div>
+        </form>
+      </section>
+
+      <section class="history-section" aria-labelledby="historyTitle">
+        <div class="section-heading">
+          <div>
+            <p class="eyebrow">Archive</p>
+            <h2 id="historyTitle">Round history</h2>
+          </div>
+          <p class="sync-status" id="appStatus" role="status" aria-live="polite"></p>
+        </div>
+        <div class="history-list" id="historyList"></div>
+      </section>
+    </main>
+
+    <template id="playerFormTemplate">
+      <article class="player-card">
+        <div class="player-header">
+          <label class="player-name-label">
+            Player name
+            <input class="player-name" type="text" autocomplete="off" required />
+          </label>
+          <div class="player-total">
+            <span>Total</span>
+            <strong>0</strong>
+          </div>
+        </div>
+
+        <div class="answers-list"></div>
+      </article>
+    </template>
+
+    <script type="module">
+      import { initializeApp } from "https://www.gstatic.com/firebasejs/12.12.1/firebase-app.js";
+      import { getFirestore, collection, addDoc, getDocs, deleteDoc, doc, orderBy, query } from "https://www.gstatic.com/firebasejs/12.12.1/firebase-firestore.js";
+
+      const firebaseConfig = {
+        apiKey: "AIzaSyAuyjcvpGPd3BuQDfQkvgncvOFiFcwSj5U",
+        authDomain: "goalless-tracker.firebaseapp.com",
+        projectId: "goalless-tracker",
+        storageBucket: "goalless-tracker.firebasestorage.app",
+        messagingSenderId: "34223989172",
+        appId: "1:34223989172:web:a47d0a04f7848111d8d2e1"
+      };
+
+      const app = initializeApp(firebaseConfig);
+      const db = getFirestore(app);
+
+      window.goallessFirebase = { db, collection, addDoc, getDocs, deleteDoc, doc, orderBy, query };
+      import("./app.js");
+    </script>
+  </body>
+</html>
