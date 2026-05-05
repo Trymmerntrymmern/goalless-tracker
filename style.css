@@ -688,9 +688,14 @@ input:focus {
 
 .player-header {
   display: grid;
-  grid-template-columns: 1fr auto;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) auto;
   align-items: end;
   gap: 12px;
+}
+
+.player-name-label,
+.player-email-label {
+  min-width: 0;
 }
 
 .player-total {
@@ -724,12 +729,44 @@ input:focus {
 
 .answer-row {
   display: grid;
-  grid-template-columns: 1fr 104px;
+  grid-template-columns: 1fr 86px 104px;
   gap: 8px;
 }
 
 .answer-row input {
   min-height: 40px;
+}
+
+.answer-status-toggle {
+  min-height: 40px;
+  padding: 0 9px;
+  border: 1px solid rgba(101, 255, 176, 0.24);
+  border-radius: 7px;
+  color: rgba(231, 243, 255, 0.9);
+  background: rgba(101, 255, 176, 0.08);
+  cursor: pointer;
+  font-size: 0.78rem;
+  font-weight: 900;
+  transition:
+    transform 160ms ease,
+    background 160ms ease,
+    border-color 160ms ease;
+}
+
+.answer-status-toggle:hover {
+  transform: translateY(-1px);
+}
+
+.answer-status-toggle[aria-pressed="true"] {
+  border-color: rgba(255, 130, 150, 0.52);
+  color: #ffe6eb;
+  background: rgba(255, 130, 150, 0.18);
+}
+
+.answer-row.is-wrong .points-input {
+  color: #ffe6eb;
+  border-color: rgba(255, 130, 150, 0.38);
+  background: rgba(255, 130, 150, 0.1);
 }
 
 .points-input {
@@ -927,8 +964,14 @@ input:focus {
 .answer-history li {
   display: grid;
   grid-template-columns: 1fr auto;
+  align-items: center;
   gap: 10px;
+  min-height: 32px;
+  padding: 7px 9px;
+  border: 1px solid transparent;
+  border-radius: 6px;
   color: rgba(255, 255, 255, 0.84);
+  background: rgba(255, 255, 255, 0.03);
   font-size: 0.92rem;
 }
 
@@ -939,6 +982,19 @@ input:focus {
 .answer-history span:last-child {
   color: var(--gold);
   font-weight: 850;
+}
+
+.answer-history li.is-wrong {
+  border-color: rgba(255, 130, 150, 0.46);
+  color: #ffe6eb;
+  background:
+    linear-gradient(90deg, rgba(255, 130, 150, 0.24), rgba(255, 130, 150, 0.1)),
+    rgba(60, 9, 24, 0.28);
+  box-shadow: inset 3px 0 0 rgba(255, 130, 150, 0.8);
+}
+
+.answer-history li.is-wrong span:last-child {
+  color: var(--danger);
 }
 
 .history-total {
@@ -1058,7 +1114,7 @@ input:focus {
   }
 
   .answer-row {
-    grid-template-columns: 1fr 86px;
+    grid-template-columns: 1fr 76px 76px;
   }
 
   .season-stat-grid {

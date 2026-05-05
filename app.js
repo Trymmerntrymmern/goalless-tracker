@@ -1,5 +1,7 @@
 const ROUNDS_COLLECTION = "rounds";
+const MAIL_COLLECTION = "mail";
 const PLAYER_STORAGE_KEY = "goalless_player_names";
+const PLAYER_EMAIL_STORAGE_KEY = "goalless_player_emails";
 const DRAFT_STORAGE_KEY = "goalless_draft";
 const LEGACY_STORAGE_KEY = "goalless_rounds";
 const DEFAULT_PLAYERS = ["Trym", "Nicolai"];
@@ -211,6 +213,7 @@ const firebase = window.goallessFirebase;
 const savedPlayers = loadPlayers();
 const state = {
   players: savedPlayers,
+  playerEmails: loadPlayerEmails(savedPlayers),
   draft: loadDraft(savedPlayers),
   rounds: [],
   loading: true,
@@ -279,6 +282,21 @@ function loadPlayers() {
 
 function savePlayers() {
   localStorage.setItem(PLAYER_STORAGE_KEY, JSON.stringify(state.players));
+}
+
+function loadPlayerEmails(players) {
+  const saved = readJson(PLAYER_EMAIL_STORAGE_KEY);
+  const playerEmails = {};
+
+  players.forEach((playerName) => {
+    playerEmails[playerName] = typeof saved?.[playerName] === "string" ? saved[playerName] : "";
+  });
+
+  return playerEmails;
+}
+
+function savePlayerEmails() {
+  localStorage.setItem(PLAYER_EMAIL_STORAGE_KEY, JSON.stringify(state.playerEmails));
 }
 
 function loadDraft(players) {
@@ -355,6 +373,7 @@ function normalizeDraft(draft, players) {
           return {
             answer: String(savedAnswer.answer || ""),
             points: savedAnswer.points === undefined ? "" : String(savedAnswer.points),
+            wrong: Boolean(savedAnswer.wrong),
           };
         }),
       };
@@ -369,22 +388,38 @@ function renderPlayerForms() {
     const fragment = playerTemplate.content.cloneNode(true);
     const card = fragment.querySelector(".player-card");
     const nameInput = fragment.querySelector(".player-name");
+    const emailInput = fragment.querySelector(".player-email");
     const total = fragment.querySelector(".player-total strong");
     const answersList = fragment.querySelector(".answers-list");
     const saveButton = fragment.querySelector(".player-save-button");
     const draftPlayer = state.draft?.players?.[playerIndex];
+    const initialPlayerName = canonicalizePlayerName(draftPlayer?.name) || playerName;
 
     card.dataset.playerIndex = String(playerIndex);
-    nameInput.value = draftPlayer?.name || playerName;
+    nameInput.value = initialPlayerName;
+    emailInput.value = state.playerEmails[initialPlayerName] || "";
     saveButton.dataset.playerIndex = String(playerIndex);
-    saveButton.textContent = `Save ${nameInput.value || playerName}`;
+    saveButton.textContent = `Save ${initialPlayerName}`;
     nameInput.addEventListener("input", () => {
-      state.players[playerIndex] =
-        canonicalizePlayerName(nameInput.value) || DEFAULT_PLAYERS[playerIndex];
-      saveButton.textContent = `Save ${state.players[playerIndex]}`;
+      const previousName = state.players[playerIndex];
+      const nextName = canonicalizePlayerName(nameInput.value) || DEFAULT_PLAYERS[playerIndex];
+
+      if (previousName !== nextName && state.playerEmails[previousName] && !state.playerEmails[nextName]) {
+        state.playerEmails[nextName] = state.playerEmails[previousName];
+        emailInput.value = state.playerEmails[nextName];
+      }
+
+      state.players[playerIndex] = nextName;
+      saveButton.textContent = `Save ${nextName}`;
       savePlayers();
+      savePlayerEmails();
       renderLeaderboard();
       updateDateAvailability();
+    });
+    emailInput.addEventListener("input", () => {
+      const playerName = canonicalizePlayerName(nameInput.value) || DEFAULT_PLAYERS[playerIndex];
+      state.playerEmails[playerName] = emailInput.value.trim();
+      savePlayerEmails();
     });
 
     for (let answerIndex = 0; answerIndex < ANSWERS_PER_PLAYER; answerIndex += 1) {
@@ -394,7 +429,7 @@ function renderPlayerForms() {
     total.textContent = String(calculateCardTotal(card));
 
     card.addEventListener("input", () => {
-      total.textContent = String(calculateCardTotal(card));
+      updatePlayerCardTotal(card);
     });
     saveButton.addEventListener("click", () => {
       handleSavePlayer(playerIndex);
@@ -415,6 +450,15 @@ function createAnswerRow(answerIndex, savedAnswer = null) {
   answerInput.className = "answer-input";
   answerInput.value = savedAnswer?.answer || "";
 
+  const statusButton = document.createElement("button");
+  statusButton.type = "button";
+  statusButton.className = "answer-status-toggle";
+  statusButton.addEventListener("click", () => {
+    setAnswerWrongState(row, !isAnswerWrong(row));
+    updatePlayerCardTotal(row.closest(".player-card"));
+    persistDraft();
+  });
+
   const pointsInput = document.createElement("input");
   pointsInput.type = "number";
   pointsInput.placeholder = "Pts";
@@ -424,7 +468,8 @@ function createAnswerRow(answerIndex, savedAnswer = null) {
   pointsInput.className = "points-input";
   pointsInput.value = savedAnswer?.points || "";
 
-  row.append(answerInput, pointsInput);
+  row.append(answerInput, statusButton, pointsInput);
+  setAnswerWrongState(row, Boolean(savedAnswer?.wrong), { initial: true });
   return row;
 }
 
@@ -526,6 +571,7 @@ function persistDraft() {
       name: card.querySelector(".player-name").value,
       answers: [...card.querySelectorAll(".answer-row")].map((row) => ({
         answer: row.querySelector(".answer-input").value,
+        wrong: isAnswerWrong(row),
         points: row.querySelector(".points-input").value,
       })),
     })),
@@ -556,6 +602,7 @@ async function handleSavePlayer(playerIndex) {
   }
 
   const playerEntry = getPlayerEntryFromCard(card, playerIndex);
+  syncPlayerEmailsFromForm();
   const existingEntry = getExistingPlayerEntryForDate(selectedDate, playerEntry.name);
   if (existingEntry) {
     showDuplicatePlayerMessage(selectedDate, playerEntry.name, existingEntry);
@@ -580,6 +627,7 @@ async function handleSavePlayer(playerIndex) {
 
     showMessage(`Saving ${playerEntry.name}'s score...`);
     const savedRound = await savePlayerOnce(selectedDate, savedCategory, playerEntry);
+    const notificationResult = await queueRoundNotificationEmails(savedRound, playerEntry.name);
 
     state.players[playerIndex] = playerEntry.name;
     savePlayers();
@@ -588,7 +636,7 @@ async function handleSavePlayer(playerIndex) {
     clearPlayerInputs(playerIndex);
     persistDraft();
     render();
-    showMessage(`${playerEntry.name}'s score saved.`);
+    showMessage(getSaveSuccessMessage(playerEntry.name, notificationResult));
   } catch (error) {
     if (error?.message === DUPLICATE_PLAYER_ERROR) {
       state.rounds = await fetchFirestoreRounds();
@@ -605,15 +653,207 @@ async function handleSavePlayer(playerIndex) {
   }
 }
 
+async function queueRoundNotificationEmails(round, savedPlayerName) {
+  if (!firebase?.db || typeof firebase.addDoc !== "function") {
+    return {
+      queued: 0,
+      skipped: "Email alerts are not available.",
+    };
+  }
+
+  if (isRoundComplete(round)) {
+    return queueResultsEmail(round);
+  }
+
+  return queueReminderEmail(round, savedPlayerName);
+}
+
+async function queueReminderEmail(round, savedPlayerName) {
+  const submittedPlayers = new Set(round.players.map((player) => canonicalizePlayerName(player.name)));
+  const missingPlayers = state.players.filter((playerName) => !submittedPlayers.has(playerName));
+  const recipients = getRecipientEmails(missingPlayers);
+
+  if (!recipients.length) {
+    return {
+      queued: 0,
+      skipped: missingPlayers.length
+        ? `Add ${missingPlayers.join(" and ")}'s email to send the reminder.`
+        : "No reminder recipient was found.",
+    };
+  }
+
+  const dateLabel = formatDate(round.date);
+  const subject = `Goalless reminder: ${savedPlayerName} has submitted`;
+  const text = [
+    `${savedPlayerName} has saved their Goalless score for ${dateLabel}.`,
+    "",
+    `Category: ${round.category}`,
+    "",
+    "Remember to add your five answers and score.",
+  ].join("\n");
+  const html = `
+    <p><strong>${escapeHtml(savedPlayerName)}</strong> has saved their Goalless score for <strong>${escapeHtml(dateLabel)}</strong>.</p>
+    <p><strong>Category:</strong> ${escapeHtml(round.category)}</p>
+    <p>Remember to add your five answers and score.</p>
+  `;
+
+  try {
+    const queued = await queueEmail({
+      recipients,
+      subject,
+      text,
+      html,
+      type: "reminder",
+      round,
+    });
+
+    return {
+      queued,
+      type: "reminder",
+    };
+  } catch (error) {
+    console.error("Unable to queue reminder email.", error);
+    return {
+      queued: 0,
+      failed: true,
+    };
+  }
+}
+
+async function queueResultsEmail(round) {
+  const recipients = getRecipientEmails(state.players);
+
+  if (!recipients.length) {
+    return {
+      queued: 0,
+      skipped: "Add player email addresses to send the results email.",
+    };
+  }
+
+  const dateLabel = formatDate(round.date);
+  const winnerName = getUniqueWinnerName(round.players);
+  const scoreLines = round.players.map((player) => `${player.name}: ${player.total} points`);
+  const resultLine = winnerName ? `${winnerName} wins.` : "The round is a draw.";
+  const subject = `Goalless results are in: ${dateLabel}`;
+  const text = [
+    `Today's Goalless results are in for ${dateLabel}.`,
+    "",
+    `Category: ${round.category}`,
+    ...scoreLines,
+    "",
+    resultLine,
+  ].join("\n");
+  const html = `
+    <p>Today's Goalless results are in for <strong>${escapeHtml(dateLabel)}</strong>.</p>
+    <p><strong>Category:</strong> ${escapeHtml(round.category)}</p>
+    <ul>
+      ${round.players
+        .map((player) => `<li>${escapeHtml(player.name)}: <strong>${player.total} points</strong></li>`)
+        .join("")}
+    </ul>
+    <p><strong>${escapeHtml(resultLine)}</strong></p>
+  `;
+
+  try {
+    const queued = await queueEmail({
+      recipients,
+      subject,
+      text,
+      html,
+      type: "results",
+      round,
+    });
+
+    return {
+      queued,
+      type: "results",
+    };
+  } catch (error) {
+    console.error("Unable to queue results email.", error);
+    return {
+      queued: 0,
+      failed: true,
+    };
+  }
+}
+
+async function queueEmail({ recipients, subject, text, html, type, round }) {
+  const cleanRecipients = [...new Set(recipients.map(normalizeEmail).filter(Boolean))];
+
+  if (!cleanRecipients.length) {
+    return 0;
+  }
+
+  await firebase.addDoc(firebase.collection(firebase.db, MAIL_COLLECTION), {
+    to: cleanRecipients,
+    message: {
+      subject,
+      text,
+      html,
+    },
+    notificationType: type,
+    roundId: round.id,
+    roundDate: round.date,
+    createdAt: typeof firebase.serverTimestamp === "function"
+      ? firebase.serverTimestamp()
+      : new Date().toISOString(),
+  });
+
+  return cleanRecipients.length;
+}
+
+function getRecipientEmails(playerNames) {
+  return playerNames
+    .map((playerName) => state.playerEmails[canonicalizePlayerName(playerName)])
+    .map(normalizeEmail)
+    .filter(Boolean);
+}
+
+function syncPlayerEmailsFromForm() {
+  document.querySelectorAll(".player-card").forEach((card) => {
+    const playerIndex = Number(card.dataset.playerIndex || 0);
+    const playerName =
+      canonicalizePlayerName(card.querySelector(".player-name")?.value) ||
+      DEFAULT_PLAYERS[playerIndex];
+    const email = card.querySelector(".player-email")?.value || "";
+    state.playerEmails[playerName] = email.trim();
+  });
+  savePlayerEmails();
+}
+
+function normalizeEmail(email) {
+  const cleanEmail = String(email || "").trim();
+  return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(cleanEmail) ? cleanEmail : "";
+}
+
+function getSaveSuccessMessage(playerName, notificationResult) {
+  if (notificationResult?.failed) {
+    return `${playerName}'s score saved. Email notification could not be queued.`;
+  }
+
+  if (notificationResult?.queued > 0) {
+    const label = notificationResult.type === "results" ? "Results email" : "Reminder email";
+    return `${playerName}'s score saved. ${label} queued.`;
+  }
+
+  if (notificationResult?.skipped) {
+    return `${playerName}'s score saved. ${notificationResult.skipped}`;
+  }
+
+  return `${playerName}'s score saved.`;
+}
+
 function getPlayerEntryFromCard(card, playerIndex) {
   const nameInput = card.querySelector(".player-name");
   const name = canonicalizePlayerName(nameInput.value) || DEFAULT_PLAYERS[playerIndex];
   const answers = [...card.querySelectorAll(".answer-row")].map((row, answerIndex) => {
     const answer = row.querySelector(".answer-input").value.trim();
-    const points = parsePoints(row.querySelector(".points-input").value);
+    const wrong = isAnswerWrong(row);
+    const points = wrong ? 100 : parsePoints(row.querySelector(".points-input").value);
 
     return {
       answer: answer || `Answer ${answerIndex + 1}`,
+      wrong,
       points,
     };
   });
@@ -631,8 +871,15 @@ function resetRoundInputs() {
   roundCategory.value = "";
 
   document.querySelectorAll(".player-card").forEach((card) => {
+    card.querySelectorAll(".answer-row").forEach((row) => {
+      setAnswerWrongState(row, false, { initial: true });
+    });
     card.querySelectorAll(".answer-input, .points-input").forEach((input) => {
       input.value = "";
+      input.disabled = false;
+    });
+    card.querySelectorAll(".answer-status-toggle").forEach((button) => {
+      button.disabled = false;
     });
     card.querySelector(".player-total strong").textContent = "0";
   });
@@ -648,6 +895,13 @@ function clearPlayerInputs(playerIndex) {
 
   card.querySelectorAll(".answer-input, .points-input").forEach((input) => {
     input.value = "";
+    input.disabled = false;
+  });
+  card.querySelectorAll(".answer-row").forEach((row) => {
+    setAnswerWrongState(row, false, { initial: true });
+  });
+  card.querySelectorAll(".answer-status-toggle").forEach((button) => {
+    button.disabled = false;
   });
   card.querySelector(".player-total strong").textContent = "0";
 }
@@ -1381,9 +1635,9 @@ function renderHistoryPlayer(player, isWinner) {
         ${player.answers
           .map(
             (answer) => `
-              <li>
+              <li class="${answer.wrong ? "is-wrong" : ""}">
                 <span>${escapeHtml(answer.answer)}</span>
-                <span>${answer.points}</span>
+                <span>${answer.wrong ? "Wrong · 100" : answer.points}</span>
               </li>
             `,
           )
@@ -1409,10 +1663,12 @@ function normalizeRound(round) {
       const answers = Array.isArray(player.answers) ? player.answers : [];
       const normalizedAnswers = Array.from({ length: ANSWERS_PER_PLAYER }, (_, answerIndex) => {
         const answer = answers[answerIndex] || {};
+        const wrong = Boolean(answer.wrong);
 
         return {
           answer: String(answer.answer || `Answer ${answerIndex + 1}`),
-          points: parsePoints(answer.points),
+          wrong,
+          points: wrong ? 100 : parsePoints(answer.points),
         };
       });
 
@@ -1529,8 +1785,11 @@ function updateDateAvailability() {
       clearPlayerInputs(playerIndex);
     }
     card.classList.toggle("is-submitted", Boolean(existingEntry));
-    card.querySelectorAll(".answer-input, .points-input").forEach((input) => {
+    card.querySelectorAll(".answer-input, .answer-status-toggle").forEach((input) => {
       input.disabled = Boolean(existingEntry);
+    });
+    card.querySelectorAll(".answer-row").forEach((row) => {
+      row.querySelector(".points-input").disabled = Boolean(existingEntry) || isAnswerWrong(row);
     });
     button.disabled = isSavingAnotherPlayer || isSavingThisPlayer || Boolean(existingEntry);
     button.textContent = isSavingThisPlayer ? "Saving..." : `Save ${playerName}`;
@@ -1591,6 +1850,46 @@ function calculateCardTotal(card) {
     (total, input) => total + parsePoints(input.value),
     0,
   );
+}
+
+function updatePlayerCardTotal(card) {
+  if (!card) {
+    return;
+  }
+
+  card.querySelector(".player-total strong").textContent = String(calculateCardTotal(card));
+}
+
+function isAnswerWrong(row) {
+  return row.dataset.wrong === "true";
+}
+
+function setAnswerWrongState(row, isWrong, options = {}) {
+  const statusButton = row.querySelector(".answer-status-toggle");
+  const pointsInput = row.querySelector(".points-input");
+
+  row.dataset.wrong = String(isWrong);
+  row.classList.toggle("is-wrong", isWrong);
+  statusButton.setAttribute("aria-pressed", String(isWrong));
+  statusButton.textContent = isWrong ? "Wrong" : "Correct";
+  statusButton.title = isWrong
+    ? "Marked wrong. This answer is automatically worth 100 points."
+    : "Marked correct. Enter the points manually.";
+
+  if (isWrong) {
+    pointsInput.value = "100";
+    pointsInput.disabled = true;
+    row.dataset.autoWrongPoints = "true";
+    return;
+  }
+
+  pointsInput.disabled = false;
+
+  if (!options.initial && row.dataset.autoWrongPoints === "true") {
+    pointsInput.value = "";
+  }
+
+  delete row.dataset.autoWrongPoints;
 }
 
 function sumAnswers(answers) {
