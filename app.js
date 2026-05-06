@@ -218,6 +218,7 @@ const state = {
   rounds: [],
   loading: true,
   savingPlayer: null,
+  categoryDate: null,
 };
 
 const roundForm = document.querySelector("#roundForm");
@@ -242,7 +243,8 @@ init();
 
 async function init() {
   roundDate.value = state.draft?.date || getToday();
-  roundCategory.value = state.draft?.category || "";
+  roundCategory.value = getDraftCategoryForDate(roundDate.value);
+  state.categoryDate = roundDate.value;
   renderPlayerForms();
   render();
 
@@ -356,11 +358,31 @@ function normalizeDraft(draft, players) {
     return null;
   }
 
+  const date = String(draft.date || getToday());
+  const categories = {};
+  const savedCategories =
+    draft.categories && typeof draft.categories === "object" ? draft.categories : {};
+
+  Object.entries(savedCategories).forEach(([categoryDate, category]) => {
+    const cleanDate = String(categoryDate || "").trim();
+    const cleanCategory = String(category || "").trim();
+
+    if (cleanDate && cleanCategory) {
+      categories[cleanDate] = cleanCategory;
+    }
+  });
+
+  const legacyCategory = String(draft.category || "").trim();
+  if (legacyCategory && !categories[date]) {
+    categories[date] = legacyCategory;
+  }
+
   const draftPlayers = Array.isArray(draft.players) ? draft.players : [];
 
   return {
-    date: String(draft.date || getToday()),
-    category: String(draft.category || ""),
+    date,
+    category: categories[date] || "",
+    categories,
     players: players.map((playerName, playerIndex) => {
       const draftPlayer = draftPlayers[playerIndex] || {};
       const answers = Array.isArray(draftPlayer.answers) ? draftPlayer.answers : [];
@@ -481,6 +503,7 @@ async function loadRounds() {
   try {
     state.rounds = await fetchFirestoreRounds();
     sortRounds();
+    syncCategoryForSelectedDate({ force: true });
     showStatus("");
   } catch (error) {
     console.error("Unable to load rounds.", error);
@@ -564,9 +587,22 @@ async function savePlayerOnce(date, category, playerEntry) {
 }
 
 function persistDraft() {
+  const date = roundDate.value || getToday();
+  const categories = {
+    ...(state.draft?.categories || {}),
+  };
+  const category = roundCategory.value.trim();
+
+  if (category) {
+    categories[date] = category;
+  } else {
+    delete categories[date];
+  }
+
   const draft = {
-    date: roundDate.value || getToday(),
-    category: roundCategory.value,
+    date,
+    category: categories[date] || "",
+    categories,
     players: [...document.querySelectorAll(".player-card")].map((card) => ({
       name: card.querySelector(".player-name").value,
       answers: [...card.querySelectorAll(".answer-row")].map((row) => ({
@@ -579,6 +615,45 @@ function persistDraft() {
 
   state.draft = draft;
   localStorage.setItem(DRAFT_STORAGE_KEY, JSON.stringify(draft));
+}
+
+function syncCategoryForSelectedDate(options = {}) {
+  const selectedDate = roundDate.value || getToday();
+  const dateChanged = state.categoryDate !== selectedDate;
+
+  if (!options.force && !dateChanged) {
+    return;
+  }
+
+  roundCategory.value = getCategoryForDate(selectedDate);
+  state.categoryDate = selectedDate;
+  persistDraft();
+}
+
+function getCategoryForDate(date) {
+  return getSavedCategoryForDate(date) || getDraftCategoryForDate(date);
+}
+
+function getSavedCategoryForDate(date) {
+  const savedRound = state.rounds.find((round) => round.date === date);
+  return String(savedRound?.category || "").trim();
+}
+
+function getDraftCategoryForDate(date) {
+  const draftCategories =
+    state.draft?.categories && typeof state.draft.categories === "object"
+      ? state.draft.categories
+      : {};
+
+  if (draftCategories[date]) {
+    return String(draftCategories[date]).trim();
+  }
+
+  if (state.draft?.date === date && state.draft.category) {
+    return String(state.draft.category).trim();
+  }
+
+  return "";
 }
 
 async function handleSavePlayer(playerIndex) {
@@ -1766,10 +1841,7 @@ function updateDateAvailability() {
   const existingDateRound = state.rounds.find((round) => round.date === selectedDate);
   let blockedPlayers = 0;
 
-  if (existingDateRound?.category && !roundCategory.value.trim()) {
-    roundCategory.value = existingDateRound.category;
-    persistDraft();
-  }
+  syncCategoryForSelectedDate();
 
   buttons.forEach((button) => {
     const card = button.closest(".player-card");
