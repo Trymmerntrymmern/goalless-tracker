@@ -412,6 +412,77 @@ h3 {
   min-height: 210px;
 }
 
+.margin-svg {
+  min-height: 220px;
+}
+
+.margin-center-line {
+  stroke: rgba(240, 192, 64, 0.72);
+  stroke-dasharray: 5 6;
+  stroke-width: 1.6;
+}
+
+.margin-grid-line {
+  stroke: rgba(176, 218, 255, 0.13);
+  stroke-width: 1;
+}
+
+.margin-side-fill.is-trym {
+  fill: rgba(240, 192, 64, 0.08);
+}
+
+.margin-side-fill.is-nicolai {
+  fill: rgba(100, 210, 255, 0.1);
+}
+
+.margin-bar {
+  opacity: 0.9;
+  filter: drop-shadow(0 0 7px rgba(100, 210, 255, 0.12));
+}
+
+.margin-bar.is-trym,
+.margin-dot.is-trym {
+  filter: drop-shadow(0 0 8px rgba(240, 192, 64, 0.18));
+}
+
+.margin-bar.is-nicolai,
+.margin-dot.is-nicolai {
+  filter: drop-shadow(0 0 8px rgba(100, 210, 255, 0.18));
+}
+
+.margin-bar.is-draw,
+.margin-dot.is-draw {
+  opacity: 0.55;
+}
+
+.margin-player-label,
+.margin-draw-label,
+.margin-recency-label {
+  font-size: 13px;
+  font-weight: 900;
+  paint-order: stroke fill;
+  stroke: rgba(2, 9, 22, 0.48);
+  stroke-linejoin: round;
+  stroke-width: 2px;
+}
+
+.margin-player-label.is-trym {
+  fill: #ffe08a;
+}
+
+.margin-player-label.is-nicolai {
+  fill: #b6efff;
+}
+
+.margin-draw-label {
+  fill: var(--soft);
+}
+
+.margin-recency-label {
+  fill: rgba(231, 243, 255, 0.44);
+  font-size: 11px;
+}
+
 .chart-frame svg {
   display: block;
   width: 100%;

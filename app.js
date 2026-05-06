@@ -230,7 +230,7 @@ const historicalSummary = document.querySelector("#historicalSummary");
 const seasonStats = document.querySelector("#seasonStats");
 const trendLegend = document.querySelector("#trendLegend");
 const trendChart = document.querySelector("#trendChart");
-const gapChart = document.querySelector("#gapChart");
+const marginChart = document.querySelector("#marginChart");
 const trendInsights = document.querySelector("#trendInsights");
 const historyList = document.querySelector("#historyList");
 const roundCount = document.querySelector("#roundCount");
@@ -1221,7 +1221,7 @@ function renderVisualisations() {
   if (rounds.length < 2) {
     trendLegend.innerHTML = "";
     trendChart.innerHTML = '<div class="empty-state">Add more rounds to draw trends.</div>';
-    gapChart.innerHTML = '<div class="empty-state">Add more rounds to draw the score gap.</div>';
+    marginChart.innerHTML = '<div class="empty-state">Add more rounds to draw winning margins.</div>';
     trendInsights.innerHTML = '<div class="empty-state">Recent form appears after 20 rounds.</div>';
     return;
   }
@@ -1238,7 +1238,7 @@ function renderVisualisations() {
     .join("");
 
   trendChart.innerHTML = renderRollingAverageChart(rounds);
-  gapChart.innerHTML = renderScoreGapChart(rounds);
+  marginChart.innerHTML = renderWinningMarginChart(rounds);
   trendInsights.innerHTML = renderTrendInsights(rounds);
 }
 
@@ -1414,28 +1414,99 @@ function renderRollingAverageChart(rounds) {
   });
 }
 
-function renderScoreGapChart(rounds) {
-  const points = getRollingGapPoints(rounds, 10);
-  const maxAbs = Math.max(40, ...points.map((point) => Math.abs(point.value)));
+function renderWinningMarginChart(rounds) {
+  const recentRounds = rounds.slice(-16);
+  const colors = getPlayerColors();
+  const width = 640;
+  const height = 310;
+  const padding = {
+    top: 44,
+    right: 28,
+    bottom: 42,
+    left: 28,
+  };
+  const centerX = width / 2;
+  const plotWidth = width - padding.left - padding.right;
+  const halfWidth = plotWidth / 2 - 16;
+  const plotHeight = height - padding.top - padding.bottom;
+  const rowHeight = plotHeight / recentRounds.length;
+  const maxMargin = Math.max(
+    10,
+    ...recentRounds.map((round) => Math.abs(round.scores.Trym - round.scores.Nicolai)),
+  );
+  const wins = {
+    Trym: recentRounds.filter((round) => getWinnerFromScores(round.scores) === "Trym").length,
+    Nicolai: recentRounds.filter((round) => getWinnerFromScores(round.scores) === "Nicolai").length,
+  };
+  const draws = recentRounds.length - wins.Trym - wins.Nicolai;
+  const marginScale = (margin) => (margin / maxMargin) * halfWidth;
+  const bars = recentRounds
+    .map((round, index) => {
+      const trymScore = round.scores.Trym;
+      const nicolaiScore = round.scores.Nicolai;
+      const winner = getWinnerFromScores(round.scores);
+      const margin = Math.abs(trymScore - nicolaiScore);
+      const barWidth = Math.max(winner ? 3 : 10, marginScale(margin));
+      const barHeight = Math.max(6, Math.min(14, rowHeight * 0.48));
+      const y = padding.top + index * rowHeight + (rowHeight - barHeight) / 2;
+      const x = winner === "Trym" ? centerX - barWidth : centerX;
+      const fill = winner ? colors[winner] : "rgba(231, 243, 255, 0.5)";
+      const label = winner ? `${winner} by ${margin}` : "Draw";
+      const scoreLabel = `Trym ${trymScore}, Nicolai ${nicolaiScore}`;
 
-  return renderLineChart({
-    className: "gap-svg",
-    height: 260,
-    maxX: rounds.length - 1,
-    minY: -maxAbs,
-    maxY: maxAbs,
-    values: [-maxAbs, maxAbs],
-    xLabels: getChartXLabels(rounds),
-    yLabel: "Trym - Nicolai",
-    zeroLine: true,
-    series: [
-      {
-        name: "Score gap",
-        color: "#f0c040",
-        points,
-      },
-    ],
-  });
+      return `
+        <g>
+          <title>${escapeHtml(`${round.label}: ${scoreLabel} (${label})`)}</title>
+          <rect
+            class="margin-bar ${winner ? `is-${winner.toLowerCase()}` : "is-draw"}"
+            x="${x.toFixed(2)}"
+            y="${y.toFixed(2)}"
+            width="${barWidth.toFixed(2)}"
+            height="${barHeight.toFixed(2)}"
+            rx="4"
+            fill="${fill}"
+          ></rect>
+          <circle
+            class="margin-dot ${winner ? `is-${winner.toLowerCase()}` : "is-draw"}"
+            cx="${winner === "Trym" ? (centerX - barWidth).toFixed(2) : (centerX + barWidth).toFixed(2)}"
+            cy="${(y + barHeight / 2).toFixed(2)}"
+            r="3"
+            fill="${fill}"
+          ></circle>
+        </g>
+      `;
+    })
+    .join("");
+  const tickLabels = [0, Math.round(maxMargin / 2), maxMargin]
+    .map((value) => {
+      const offset = marginScale(value);
+
+      return `
+        <g>
+          <line class="margin-grid-line" x1="${centerX - offset}" x2="${centerX - offset}" y1="${padding.top}" y2="${height - padding.bottom}"></line>
+          <line class="margin-grid-line" x1="${centerX + offset}" x2="${centerX + offset}" y1="${padding.top}" y2="${height - padding.bottom}"></line>
+          <text class="chart-axis-text" x="${centerX + offset}" y="${height - 16}" text-anchor="middle">${value}</text>
+          ${value ? `<text class="chart-axis-text" x="${centerX - offset}" y="${height - 16}" text-anchor="middle">${value}</text>` : ""}
+        </g>
+      `;
+    })
+    .join("");
+
+  return `
+    <svg class="margin-svg" viewBox="0 0 ${width} ${height}" role="img" aria-label="Recent winning margins">
+      <rect class="chart-plot-bg" x="${padding.left}" y="${padding.top}" width="${plotWidth}" height="${plotHeight}" rx="6"></rect>
+      <rect class="margin-side-fill is-trym" x="${padding.left}" y="${padding.top}" width="${centerX - padding.left}" height="${plotHeight}"></rect>
+      <rect class="margin-side-fill is-nicolai" x="${centerX}" y="${padding.top}" width="${width - padding.right - centerX}" height="${plotHeight}"></rect>
+      <text class="margin-player-label is-trym" x="${padding.left}" y="24" text-anchor="start" fill="#ffe08a">Trym: ${wins.Trym} wins</text>
+      <text class="margin-player-label is-nicolai" x="${width - padding.right}" y="24" text-anchor="end" fill="#b6efff">Nicolai: ${wins.Nicolai} wins</text>
+      ${draws ? `<text class="margin-draw-label" x="${centerX}" y="24" text-anchor="middle">${draws} draw${draws === 1 ? "" : "s"}</text>` : ""}
+      ${tickLabels}
+      <line class="margin-center-line" x1="${centerX}" x2="${centerX}" y1="${padding.top - 6}" y2="${height - padding.bottom + 6}"></line>
+      <text class="margin-recency-label" x="${padding.left + 8}" y="${padding.top + 16}" text-anchor="start">Older</text>
+      <text class="margin-recency-label" x="${padding.left + 8}" y="${height - padding.bottom - 8}" text-anchor="start">Latest</text>
+      ${bars}
+    </svg>
+  `;
 }
 
 function renderLineChart({
@@ -1555,18 +1626,6 @@ function getRollingAveragePoints(rounds, playerName, windowSize) {
       index,
       label: round.label,
       value: average(window),
-    };
-  });
-}
-
-function getRollingGapPoints(rounds, windowSize) {
-  return rounds.map((round, index) => {
-    const window = rounds.slice(Math.max(0, index - windowSize + 1), index + 1);
-
-    return {
-      index,
-      label: round.label,
-      value: average(window.map((item) => item.scores.Trym - item.scores.Nicolai)),
     };
   });
 }

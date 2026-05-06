@@ -10,7 +10,7 @@
       href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700;800;900&display=swap"
       rel="stylesheet"
     />
-    <link rel="stylesheet" href="style.css" />
+    <link rel="stylesheet" href="style.css?v=winning-margins-2" />
   </head>
   <body>
     <main class="app-shell">
@@ -57,11 +57,11 @@
           <article class="chart-card">
             <div class="chart-heading">
               <div>
-                <h3>Score gap</h3>
-                <p>Negative favours Trym, positive favours Nicolai.</p>
+                <h3>Winning margins</h3>
+                <p>Last 16 completed rounds. Each bar is one round: left means Trym won, right means Nicolai won, length shows the margin.</p>
               </div>
             </div>
-            <div class="chart-frame compact-chart" id="gapChart"></div>
+            <div class="chart-frame compact-chart" id="marginChart"></div>
           </article>
           <article class="chart-card">
             <div class="chart-heading">
@@ -162,7 +162,7 @@
       const db = getFirestore(app);
 
       window.goallessFirebase = { db, collection, addDoc, getDocs, deleteDoc, doc, orderBy, query, runTransaction, serverTimestamp };
-      import("./app.js");
+      import("./app.js?v=winning-margins-2");
     </script>
   </body>
 </html>
