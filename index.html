@@ -10,7 +10,7 @@
       href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700;800;900&display=swap"
       rel="stylesheet"
     />
-    <link rel="stylesheet" href="style.css?v=winning-margins-2" />
+    <link rel="stylesheet" href="style.css?v=screenshot-import-2" />
   </head>
   <body>
     <main class="app-shell">
@@ -141,6 +141,12 @@
         </div>
 
         <div class="answers-list"></div>
+        <div class="screenshot-import">
+          <input class="screenshot-input" type="file" accept="image/*" aria-label="Score screenshot" />
+          <button class="ghost-button screenshot-pick-button" type="button">Choose screenshot</button>
+          <div class="screenshot-dropzone" tabindex="0">Paste or drop image</div>
+          <p class="screenshot-status" role="status" aria-live="polite"></p>
+        </div>
         <button class="primary-button player-save-button" type="button">Save score</button>
       </article>
     </template>
@@ -162,7 +168,7 @@
       const db = getFirestore(app);
 
       window.goallessFirebase = { db, collection, addDoc, getDocs, deleteDoc, doc, orderBy, query, runTransaction, serverTimestamp };
-      import("./app.js?v=winning-margins-2");
+      import("./app.js?v=screenshot-import-2");
     </script>
   </body>
 </html>

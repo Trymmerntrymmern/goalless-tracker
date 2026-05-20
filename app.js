@@ -7,6 +7,14 @@ const LEGACY_STORAGE_KEY = "goalless_rounds";
 const DEFAULT_PLAYERS = ["Trym", "Nicolai"];
 const ANSWERS_PER_PLAYER = 5;
 const DUPLICATE_PLAYER_ERROR = "duplicate-player";
+const TESSERACT_SCRIPT_URL = "https://cdn.jsdelivr.net/npm/tesseract.js@5.1.1/dist/tesseract.min.js";
+const OCR_LANGUAGE = "eng";
+const OCR_WRONG_PATTERN = /\b(wrong|incorrect|invalid|missed|not found|no answer)\b/i;
+const SCORE_SCREENSHOT_SCALE = 4;
+const SCORE_SCREENSHOT_TEXT_PADDING = 18;
+const SCORE_SCREENSHOT_ANSWER_COLUMN_RATIO = 0.82;
+const SCORE_SCREENSHOT_SCORE_COLUMN_RATIO = 0.76;
+let tesseractLoadPromise = null;
 const HISTORICAL_SEASONS = [
   {
     year: 2025,
@@ -218,6 +226,7 @@ const state = {
   rounds: [],
   loading: true,
   savingPlayer: null,
+  importingPlayerIndex: null,
   categoryDate: null,
 };
 
@@ -414,6 +423,9 @@ function renderPlayerForms() {
     const total = fragment.querySelector(".player-total strong");
     const answersList = fragment.querySelector(".answers-list");
     const saveButton = fragment.querySelector(".player-save-button");
+    const screenshotInput = fragment.querySelector(".screenshot-input");
+    const screenshotButton = fragment.querySelector(".screenshot-pick-button");
+    const screenshotDropzone = fragment.querySelector(".screenshot-dropzone");
     const draftPlayer = state.draft?.players?.[playerIndex];
     const initialPlayerName = canonicalizePlayerName(draftPlayer?.name) || playerName;
 
@@ -456,6 +468,13 @@ function renderPlayerForms() {
     saveButton.addEventListener("click", () => {
       handleSavePlayer(playerIndex);
     });
+    wireScreenshotImport({
+      card,
+      playerIndex,
+      screenshotInput,
+      screenshotButton,
+      screenshotDropzone,
+    });
 
     playerForms.appendChild(fragment);
   });
@@ -493,6 +512,1006 @@ function createAnswerRow(answerIndex, savedAnswer = null) {
   row.append(answerInput, statusButton, pointsInput);
   setAnswerWrongState(row, Boolean(savedAnswer?.wrong), { initial: true });
   return row;
+}
+
+function wireScreenshotImport({
+  card,
+  playerIndex,
+  screenshotInput,
+  screenshotButton,
+  screenshotDropzone,
+}) {
+  if (!card || !screenshotInput || !screenshotButton || !screenshotDropzone) {
+    return;
+  }
+
+  screenshotButton.addEventListener("click", () => {
+    if (!isScreenshotImportDisabled(card)) {
+      screenshotInput.click();
+    }
+  });
+
+  screenshotInput.addEventListener("change", () => {
+    handleScreenshotFile(screenshotInput.files?.[0], playerIndex, card);
+  });
+
+  screenshotDropzone.addEventListener("keydown", (event) => {
+    if (event.key !== "Enter" && event.key !== " ") {
+      return;
+    }
+
+    event.preventDefault();
+    if (!isScreenshotImportDisabled(card)) {
+      screenshotInput.click();
+    }
+  });
+
+  screenshotDropzone.addEventListener("paste", (event) => {
+    const file = getImageFileFromDataTransfer(event.clipboardData);
+    if (!file || isScreenshotImportDisabled(card)) {
+      return;
+    }
+
+    event.preventDefault();
+    event.stopPropagation();
+    handleScreenshotFile(file, playerIndex, card);
+  });
+
+  ["dragenter", "dragover"].forEach((eventName) => {
+    screenshotDropzone.addEventListener(eventName, (event) => {
+      event.preventDefault();
+      if (!isScreenshotImportDisabled(card)) {
+        screenshotDropzone.classList.add("is-dragging");
+      }
+    });
+  });
+
+  screenshotDropzone.addEventListener("dragleave", () => {
+    screenshotDropzone.classList.remove("is-dragging");
+  });
+
+  screenshotDropzone.addEventListener("drop", (event) => {
+    event.preventDefault();
+    screenshotDropzone.classList.remove("is-dragging");
+
+    const file = getImageFileFromDataTransfer(event.dataTransfer);
+    if (file && !isScreenshotImportDisabled(card)) {
+      handleScreenshotFile(file, playerIndex, card);
+    }
+  });
+
+  card.addEventListener("paste", (event) => {
+    const file = getImageFileFromDataTransfer(event.clipboardData);
+    if (!file || isScreenshotImportDisabled(card)) {
+      return;
+    }
+
+    event.preventDefault();
+    handleScreenshotFile(file, playerIndex, card);
+  });
+}
+
+async function handleScreenshotFile(file, playerIndex, card) {
+  if (!file || !card) {
+    return;
+  }
+
+  const screenshotInput = card.querySelector(".screenshot-input");
+  if (!file.type.startsWith("image/")) {
+    setScreenshotStatus(card, "Choose an image file.", true);
+    if (screenshotInput) {
+      screenshotInput.value = "";
+    }
+    return;
+  }
+
+  const playerName =
+    canonicalizePlayerName(card.querySelector(".player-name")?.value) ||
+    DEFAULT_PLAYERS[playerIndex];
+
+  if (isScreenshotImportDisabled(card) && state.importingPlayerIndex !== playerIndex) {
+    return;
+  }
+
+  state.importingPlayerIndex = playerIndex;
+  setScreenshotBusy(card, true);
+  setScreenshotStatus(card, "Loading OCR...");
+  updateDateAvailability();
+
+  try {
+    const parsed = await readScoreScreenshot(file, playerName, card);
+
+    if (!parsed.answers.length) {
+      setScreenshotStatus(card, "No answers found. Try a tighter crop.", true);
+      return;
+    }
+
+    const importedCount = applyScreenshotAnswersToCard(card, parsed.answers);
+    persistDraft();
+    updatePlayerCardTotal(card);
+    setScreenshotStatus(
+      card,
+      `Imported ${importedCount} ${importedCount === 1 ? "answer" : "answers"}. Review before saving.`,
+    );
+    showMessage(`Imported ${playerName}'s screenshot. Review before saving.`);
+  } catch (error) {
+    console.error("Unable to read score screenshot.", error);
+    setScreenshotStatus(card, getScreenshotErrorMessage(error), true);
+  } finally {
+    state.importingPlayerIndex = null;
+    setScreenshotBusy(card, false);
+    if (screenshotInput) {
+      screenshotInput.value = "";
+    }
+    updateDateAvailability();
+  }
+}
+
+async function readScoreScreenshot(file, playerName, card) {
+  try {
+    return await recognizeStructuredScoreScreenshot(file, card);
+  } catch (error) {
+    if (error?.message !== "score-layout-not-found") {
+      throw error;
+    }
+
+    setScreenshotStatus(card, "Trying whole-image OCR...");
+    const text = await recognizeScreenshotText(file, card);
+    return parseScoreScreenshotText(text, playerName);
+  }
+}
+
+async function recognizeStructuredScoreScreenshot(file, card) {
+  setScreenshotStatus(card, "Finding answer rows...");
+  const sourceCanvas = await createImageCanvas(file);
+  const layout = detectScoreScreenshotLayout(sourceCanvas);
+
+  if (layout.rows.length < ANSWERS_PER_PLAYER) {
+    throw new Error("score-layout-not-found");
+  }
+
+  const ocr = await createScreenshotOcrSession(card);
+
+  try {
+    const answers = [];
+    for (let index = 0; index < ANSWERS_PER_PLAYER; index += 1) {
+      const row = layout.rows[index];
+      setScreenshotStatus(card, `Reading answer ${index + 1} of ${ANSWERS_PER_PLAYER}...`);
+
+      const answerText = await recognizeScoreCrop(
+        sourceCanvas,
+        getScoreAnswerCrop(sourceCanvas, row),
+        ocr,
+      );
+      const answer = cleanStructuredAnswerText(answerText) || `Answer ${index + 1}`;
+      const wrong = row.kind === "wrong";
+      let points = wrong ? 100 : null;
+
+      if (!wrong) {
+        const scoreText = await recognizeScoreCrop(
+          sourceCanvas,
+          getScoreValueCrop(sourceCanvas, row),
+          ocr,
+        );
+        points = parseScreenshotScoreValue(scoreText, { max: 100 });
+      }
+
+      answers.push({
+        answer,
+        wrong,
+        points,
+      });
+    }
+
+    const totalText = await recognizeScoreCrop(
+      sourceCanvas,
+      getScoreTotalCrop(sourceCanvas, layout.rows[0]),
+      ocr,
+    );
+    const total = parseScreenshotScoreValue(totalText, { max: 999 });
+
+    return {
+      answers: reconcileStructuredScores(answers, total),
+      total,
+    };
+  } finally {
+    await ocr.terminate();
+  }
+}
+
+async function recognizeScreenshotText(file, card) {
+  const Tesseract = await loadTesseract();
+  const result = await Tesseract.recognize(file, OCR_LANGUAGE, {
+    logger(message) {
+      const status = getOcrStatusLabel(message);
+      if (status) {
+        setScreenshotStatus(card, status);
+      }
+    },
+  });
+
+  return String(result?.data?.text || "").trim();
+}
+
+async function recognizeScoreCrop(sourceCanvas, crop, ocr) {
+  const textCanvas = createWhiteTextMaskCanvas(sourceCanvas, crop);
+  return ocr.recognize(textCanvas);
+}
+
+async function createScreenshotOcrSession(card) {
+  const Tesseract = await loadTesseract();
+  const logger = (message) => {
+    const status = getOcrStatusLabel(message);
+    if (status) {
+      setScreenshotStatus(card, status);
+    }
+  };
+
+  if (typeof Tesseract.createWorker !== "function") {
+    return {
+      async recognize(image) {
+        const result = await Tesseract.recognize(image, OCR_LANGUAGE, { logger });
+        return String(result?.data?.text || "").trim();
+      },
+      async terminate() {},
+    };
+  }
+
+  let worker = null;
+  try {
+    worker = await Tesseract.createWorker(OCR_LANGUAGE, 1, { logger });
+  } catch (error) {
+    console.warn("Unable to create reusable OCR worker.", error);
+    return {
+      async recognize(image) {
+        const result = await Tesseract.recognize(image, OCR_LANGUAGE, { logger });
+        return String(result?.data?.text || "").trim();
+      },
+      async terminate() {},
+    };
+  }
+
+  if (typeof worker.setParameters === "function") {
+    try {
+      await worker.setParameters({
+        preserve_interword_spaces: "1",
+        tessedit_pageseg_mode: "7",
+      });
+    } catch (error) {
+      console.warn("Unable to tune OCR worker.", error);
+    }
+  }
+
+  return {
+    async recognize(image) {
+      const result = await worker.recognize(image);
+      return String(result?.data?.text || "").trim();
+    },
+    async terminate() {
+      if (typeof worker.terminate === "function") {
+        await worker.terminate();
+      }
+    },
+  };
+}
+
+async function createImageCanvas(file) {
+  if (typeof createImageBitmap === "function") {
+    const bitmap = await createImageBitmap(file);
+    const canvas = document.createElement("canvas");
+    canvas.width = bitmap.width;
+    canvas.height = bitmap.height;
+    canvas.getContext("2d").drawImage(bitmap, 0, 0);
+
+    if (typeof bitmap.close === "function") {
+      bitmap.close();
+    }
+
+    return canvas;
+  }
+
+  return new Promise((resolve, reject) => {
+    const image = new Image();
+    const url = URL.createObjectURL(file);
+
+    image.onload = () => {
+      URL.revokeObjectURL(url);
+      const canvas = document.createElement("canvas");
+      canvas.width = image.naturalWidth || image.width;
+      canvas.height = image.naturalHeight || image.height;
+      canvas.getContext("2d").drawImage(image, 0, 0);
+      resolve(canvas);
+    };
+    image.onerror = () => {
+      URL.revokeObjectURL(url);
+      reject(new Error("image-load-failed"));
+    };
+    image.src = url;
+  });
+}
+
+function detectScoreScreenshotLayout(canvas) {
+  const context = canvas.getContext("2d", { willReadFrequently: true });
+  const { width, height } = canvas;
+  const image = context.getImageData(0, 0, width, height);
+  const minimumColoredPixels = Math.max(6, Math.round(width * 0.008));
+  const rowStats = Array.from({ length: height }, () => ({
+    colored: 0,
+    red: 0,
+    green: 0,
+  }));
+
+  for (let y = 0; y < height; y += 1) {
+    for (let x = 0; x < width; x += 1) {
+      const offset = (y * width + x) * 4;
+      const kind = getScorePixelKind(
+        image.data[offset],
+        image.data[offset + 1],
+        image.data[offset + 2],
+        image.data[offset + 3],
+      );
+
+      if (!kind) {
+        continue;
+      }
+
+      rowStats[y].colored += 1;
+      rowStats[y][kind] += 1;
+    }
+  }
+
+  const segments = [];
+  let activeSegment = null;
+
+  rowStats.forEach((stats, y) => {
+    if (stats.colored >= minimumColoredPixels) {
+      if (!activeSegment) {
+        activeSegment = {
+          yMin: y,
+          yMax: y,
+        };
+      }
+
+      activeSegment.yMax = y;
+      return;
+    }
+
+    if (activeSegment) {
+      segments.push(activeSegment);
+      activeSegment = null;
+    }
+  });
+
+  if (activeSegment) {
+    segments.push(activeSegment);
+  }
+
+  const rows = mergeCloseScoreSegments(segments)
+    .map((segment) => getScoreRowBounds(image, segment))
+    .filter((row) => row.height >= Math.max(8, height * 0.025) && row.coloredPixels > 0)
+    .slice(0, ANSWERS_PER_PLAYER)
+    .sort((a, b) => a.yMin - b.yMin);
+
+  return {
+    rows,
+  };
+}
+
+function mergeCloseScoreSegments(segments) {
+  const merged = [];
+
+  segments.forEach((segment) => {
+    const previous = merged[merged.length - 1];
+    if (previous && segment.yMin - previous.yMax <= 3) {
+      previous.yMax = segment.yMax;
+      return;
+    }
+
+    merged.push({ ...segment });
+  });
+
+  return merged;
+}
+
+function getScoreRowBounds(image, segment) {
+  const { width, height, data } = image;
+  let xMin = width;
+  let xMax = 0;
+  let redPixels = 0;
+  let greenPixels = 0;
+
+  for (let y = segment.yMin; y <= segment.yMax; y += 1) {
+    for (let x = 0; x < width; x += 1) {
+      const offset = (y * width + x) * 4;
+      const kind = getScorePixelKind(
+        data[offset],
+        data[offset + 1],
+        data[offset + 2],
+        data[offset + 3],
+      );
+
+      if (!kind) {
+        continue;
+      }
+
+      xMin = Math.min(xMin, x);
+      xMax = Math.max(xMax, x);
+      if (kind === "red") {
+        redPixels += 1;
+      } else {
+        greenPixels += 1;
+      }
+    }
+  }
+
+  const yMargin = Math.max(3, Math.round((segment.yMax - segment.yMin + 1) * 0.12));
+
+  return {
+    xMin: Math.max(0, xMin),
+    xMax: Math.min(width - 1, xMax),
+    yMin: Math.max(0, segment.yMin - yMargin),
+    yMax: Math.min(height - 1, segment.yMax + yMargin),
+    height: segment.yMax - segment.yMin + 1,
+    coloredPixels: redPixels + greenPixels,
+    kind: redPixels > greenPixels ? "wrong" : "correct",
+  };
+}
+
+function getScorePixelKind(red, green, blue, alpha) {
+  if (alpha < 120) {
+    return "";
+  }
+
+  const maximum = Math.max(red, green, blue);
+  const minimum = Math.min(red, green, blue);
+  const saturation = maximum - minimum;
+
+  if (green >= 115 && green > red * 1.25 && green > blue * 1.12 && saturation >= 45) {
+    return "green";
+  }
+
+  if (red >= 145 && red > green * 1.35 && red > blue * 1.05 && saturation >= 45) {
+    return "red";
+  }
+
+  return "";
+}
+
+function getScoreAnswerCrop(canvas, row) {
+  const x = Math.max(0, row.xMin + Math.round(canvas.width * 0.015));
+  const rightEdge = Math.min(
+    canvas.width,
+    Math.max(x + 80, Math.round(canvas.width * SCORE_SCREENSHOT_ANSWER_COLUMN_RATIO)),
+  );
+
+  return normalizeCropBox({
+    x,
+    y: row.yMin,
+    width: rightEdge - x,
+    height: row.yMax - row.yMin + 1,
+  }, canvas);
+}
+
+function getScoreValueCrop(canvas, row) {
+  const x = Math.max(0, Math.round(canvas.width * SCORE_SCREENSHOT_SCORE_COLUMN_RATIO));
+
+  return normalizeCropBox({
+    x,
+    y: row.yMin,
+    width: canvas.width - x,
+    height: row.yMax - row.yMin + 1,
+  }, canvas);
+}
+
+function getScoreTotalCrop(canvas, firstRow) {
+  const yMax = Math.max(1, firstRow.yMin - 2);
+  const x = Math.round(canvas.width * 0.25);
+
+  return normalizeCropBox({
+    x,
+    y: 0,
+    width: Math.round(canvas.width * 0.5),
+    height: yMax,
+  }, canvas);
+}
+
+function normalizeCropBox(box, canvas) {
+  const x = Math.max(0, Math.min(canvas.width - 1, Math.round(box.x)));
+  const y = Math.max(0, Math.min(canvas.height - 1, Math.round(box.y)));
+  const width = Math.max(1, Math.min(canvas.width - x, Math.round(box.width)));
+  const height = Math.max(1, Math.min(canvas.height - y, Math.round(box.height)));
+
+  return {
+    x,
+    y,
+    width,
+    height,
+  };
+}
+
+function createWhiteTextMaskCanvas(sourceCanvas, crop) {
+  const scaledWidth = Math.max(1, crop.width * SCORE_SCREENSHOT_SCALE);
+  const scaledHeight = Math.max(1, crop.height * SCORE_SCREENSHOT_SCALE);
+  const rawCanvas = document.createElement("canvas");
+  rawCanvas.width = scaledWidth;
+  rawCanvas.height = scaledHeight;
+
+  const rawContext = rawCanvas.getContext("2d", { willReadFrequently: true });
+  rawContext.imageSmoothingEnabled = true;
+  rawContext.drawImage(
+    sourceCanvas,
+    crop.x,
+    crop.y,
+    crop.width,
+    crop.height,
+    0,
+    0,
+    scaledWidth,
+    scaledHeight,
+  );
+
+  const rawImage = rawContext.getImageData(0, 0, scaledWidth, scaledHeight);
+  const outputCanvas = document.createElement("canvas");
+  outputCanvas.width = scaledWidth + SCORE_SCREENSHOT_TEXT_PADDING * 2;
+  outputCanvas.height = scaledHeight + SCORE_SCREENSHOT_TEXT_PADDING * 2;
+
+  const outputContext = outputCanvas.getContext("2d", { willReadFrequently: true });
+  const outputImage = outputContext.createImageData(outputCanvas.width, outputCanvas.height);
+  outputImage.data.fill(255);
+
+  for (let y = 0; y < scaledHeight; y += 1) {
+    for (let x = 0; x < scaledWidth; x += 1) {
+      const sourceOffset = (y * scaledWidth + x) * 4;
+      const destinationX = x + SCORE_SCREENSHOT_TEXT_PADDING;
+      const destinationY = y + SCORE_SCREENSHOT_TEXT_PADDING;
+      const destinationOffset = (destinationY * outputCanvas.width + destinationX) * 4;
+      const isText = isWhiteTextPixel(
+        rawImage.data[sourceOffset],
+        rawImage.data[sourceOffset + 1],
+        rawImage.data[sourceOffset + 2],
+        rawImage.data[sourceOffset + 3],
+      );
+
+      outputImage.data[destinationOffset] = isText ? 0 : 255;
+      outputImage.data[destinationOffset + 1] = isText ? 0 : 255;
+      outputImage.data[destinationOffset + 2] = isText ? 0 : 255;
+      outputImage.data[destinationOffset + 3] = 255;
+    }
+  }
+
+  outputContext.putImageData(outputImage, 0, 0);
+  return outputCanvas;
+}
+
+function isWhiteTextPixel(red, green, blue, alpha) {
+  if (alpha < 100) {
+    return false;
+  }
+
+  const brightness = (red + green + blue) / 3;
+  const spread = Math.max(red, green, blue) - Math.min(red, green, blue);
+  return brightness >= 145 && spread <= 92;
+}
+
+function reconcileStructuredScores(answers, total) {
+  const normalizedAnswers = answers.map((answer) => ({
+    ...answer,
+    points: answer.wrong ? 100 : answer.points,
+  }));
+  const missingIndexes = normalizedAnswers
+    .map((answer, index) => (!answer.wrong && !Number.isFinite(answer.points) ? index : -1))
+    .filter((index) => index >= 0);
+
+  if (Number.isFinite(total) && missingIndexes.length === 1) {
+    const knownTotal = normalizedAnswers.reduce(
+      (sum, answer) => sum + (Number.isFinite(answer.points) ? answer.points : 0),
+      0,
+    );
+    const missingScore = total - knownTotal;
+
+    if (missingScore >= 0 && missingScore <= 100) {
+      normalizedAnswers[missingIndexes[0]].points = missingScore;
+    }
+  }
+
+  return normalizedAnswers.map((answer) => ({
+    ...answer,
+    points: Number.isFinite(answer.points) ? answer.points : 0,
+  }));
+}
+
+function parseScreenshotScoreValue(text, options = {}) {
+  const max = Number.isFinite(options.max) ? options.max : 100;
+  const normalized = normalizeOcrDigits(text);
+  const matches = normalized.match(/\d{1,3}/g) || [];
+
+  for (const match of matches) {
+    const value = Number.parseInt(match, 10);
+    if (Number.isFinite(value) && value >= 0 && value <= max) {
+      return value;
+    }
+  }
+
+  return null;
+}
+
+function normalizeOcrDigits(text) {
+  return String(text || "")
+    .replace(/[oO]/g, "0")
+    .replace(/[iIlL|]/g, "1")
+    .replace(/[sS]/g, "5")
+    .replace(/[bB]/g, "8");
+}
+
+function cleanStructuredAnswerText(text) {
+  return cleanOcrLine(text)
+    .replace(/\b\d{1,3}\b/g, " ")
+    .replace(/[^\p{L}\s.'-]/gu, " ")
+    .replace(/_/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function loadTesseract() {
+  if (window.Tesseract?.recognize) {
+    return Promise.resolve(window.Tesseract);
+  }
+
+  if (tesseractLoadPromise) {
+    return tesseractLoadPromise;
+  }
+
+  tesseractLoadPromise = new Promise((resolve, reject) => {
+    const script = document.createElement("script");
+    script.src = TESSERACT_SCRIPT_URL;
+    script.async = true;
+    script.onload = () => {
+      if (window.Tesseract?.recognize) {
+        resolve(window.Tesseract);
+        return;
+      }
+
+      reject(new Error("ocr-unavailable"));
+    };
+    script.onerror = () => reject(new Error("ocr-load-failed"));
+    document.head.appendChild(script);
+  }).catch((error) => {
+    tesseractLoadPromise = null;
+    throw error;
+  });
+
+  return tesseractLoadPromise;
+}
+
+function getOcrStatusLabel(message) {
+  if (!message || typeof message !== "object") {
+    return "";
+  }
+
+  if (message.status === "recognizing text") {
+    const progress = Number.isFinite(message.progress)
+      ? Math.round(message.progress * 100)
+      : 0;
+    return progress ? `Reading screenshot ${progress}%...` : "Reading screenshot...";
+  }
+
+  if (message.status === "loading language traineddata") {
+    return "Loading OCR language...";
+  }
+
+  if (message.status === "initializing tesseract") {
+    return "Starting OCR...";
+  }
+
+  return "";
+}
+
+function getScreenshotErrorMessage(error) {
+  if (error?.message === "ocr-load-failed" || error?.message === "ocr-unavailable") {
+    return "Screenshot OCR could not load.";
+  }
+
+  return "Could not read screenshot.";
+}
+
+function getImageFileFromDataTransfer(dataTransfer) {
+  if (!dataTransfer) {
+    return null;
+  }
+
+  const item = [...(dataTransfer.items || [])].find(
+    (entry) => entry.kind === "file" && entry.type.startsWith("image/"),
+  );
+  if (item) {
+    return item.getAsFile();
+  }
+
+  return [...(dataTransfer.files || [])].find((entry) => entry.type.startsWith("image/")) || null;
+}
+
+function parseScoreScreenshotText(text, preferredPlayerName) {
+  const allLines = getOcrLines(text);
+  const scopedLines = getOcrLinesForPlayer(allLines, preferredPlayerName);
+  const primaryAnswers = extractOcrAnswerCandidates(scopedLines);
+
+  if (primaryAnswers.length >= ANSWERS_PER_PLAYER || scopedLines.length === allLines.length) {
+    return {
+      answers: primaryAnswers.slice(0, ANSWERS_PER_PLAYER),
+    };
+  }
+
+  return {
+    answers: uniqueOcrAnswers([
+      ...primaryAnswers,
+      ...extractOcrAnswerCandidates(allLines),
+    ]).slice(0, ANSWERS_PER_PLAYER),
+  };
+}
+
+function getOcrLines(text) {
+  return String(text || "")
+    .replace(/\r/g, "\n")
+    .split("\n")
+    .flatMap(splitOcrLine)
+    .map(cleanOcrLine)
+    .filter(Boolean);
+}
+
+function splitOcrLine(line) {
+  const segments = String(line || "")
+    .split(/\t+|\s{3,}/)
+    .map(cleanOcrLine)
+    .filter(Boolean);
+
+  return segments.length ? segments : [line];
+}
+
+function getOcrLinesForPlayer(lines, playerName) {
+  const target = canonicalizePlayerName(playerName).toLowerCase();
+  if (!target) {
+    return lines;
+  }
+
+  const otherPlayerNames = state.players
+    .map(canonicalizePlayerName)
+    .map((name) => name.toLowerCase())
+    .filter((name) => name && name !== target);
+  const targetIndex = lines.findIndex((line) => line.toLowerCase().includes(target));
+
+  if (targetIndex < 0) {
+    return lines;
+  }
+
+  const scopedLines = [];
+  const sameLineRemainder = cleanOcrLine(
+    lines[targetIndex].replace(new RegExp(escapeRegExp(target), "i"), ""),
+  );
+  if (sameLineRemainder) {
+    scopedLines.push(sameLineRemainder);
+  }
+
+  for (let index = targetIndex + 1; index < lines.length; index += 1) {
+    const lowerLine = lines[index].toLowerCase();
+    if (otherPlayerNames.some((name) => lowerLine.includes(name))) {
+      break;
+    }
+
+    scopedLines.push(lines[index]);
+  }
+
+  return scopedLines.length ? scopedLines : lines;
+}
+
+function extractOcrAnswerCandidates(lines) {
+  const candidates = [];
+
+  for (let index = 0; index < lines.length; index += 1) {
+    const line = cleanOcrLine(lines[index]);
+    const parsedLine = parseOcrAnswerLine(line);
+
+    if (parsedLine) {
+      candidates.push(parsedLine);
+      continue;
+    }
+
+    const nextLine = cleanOcrLine(lines[index + 1]);
+    if (isLikelyAnswerOnlyLine(line) && isStandalonePointLine(nextLine)) {
+      const wrong = OCR_WRONG_PATTERN.test(`${line} ${nextLine}`);
+      candidates.push({
+        answer: cleanOcrAnswerText(line),
+        wrong,
+        points: wrong ? 100 : parseStandalonePoints(nextLine),
+      });
+      index += 1;
+    }
+  }
+
+  return uniqueOcrAnswers(candidates);
+}
+
+function parseOcrAnswerLine(line) {
+  if (!line || isOcrIgnoredLine(line)) {
+    return null;
+  }
+
+  const wrong = OCR_WRONG_PATTERN.test(line);
+  const pointMatch = line.match(/(?:^|[\s:([{\-])(\d{1,3})(?:\s*(?:pts?|points?|%)?)?$/i);
+
+  if (!pointMatch) {
+    if (!wrong) {
+      return null;
+    }
+
+    const wrongAnswer = cleanOcrAnswerText(line);
+    return wrongAnswer
+      ? {
+          answer: wrongAnswer,
+          wrong: true,
+          points: 100,
+        }
+      : null;
+  }
+
+  const answer = cleanOcrAnswerText(line.slice(0, pointMatch.index));
+  if (!answer || isOcrIgnoredLine(answer)) {
+    return null;
+  }
+
+  return {
+    answer,
+    wrong,
+    points: wrong ? 100 : parsePoints(pointMatch[1]),
+  };
+}
+
+function uniqueOcrAnswers(candidates) {
+  const seen = new Set();
+  const uniqueAnswers = [];
+
+  candidates.forEach((candidate) => {
+    const answer = cleanOcrAnswerText(candidate.answer);
+    if (!answer || isOcrIgnoredLine(answer)) {
+      return;
+    }
+
+    const wrong = Boolean(candidate.wrong);
+    const points = wrong ? 100 : parsePoints(candidate.points);
+    const key = `${answer.toLowerCase()}::${points}`;
+    if (seen.has(key)) {
+      return;
+    }
+
+    seen.add(key);
+    uniqueAnswers.push({
+      answer,
+      wrong,
+      points,
+    });
+  });
+
+  return uniqueAnswers;
+}
+
+function applyScreenshotAnswersToCard(card, answers) {
+  const rows = [...card.querySelectorAll(".answer-row")];
+  const answersToApply = answers.slice(0, ANSWERS_PER_PLAYER);
+
+  answersToApply.forEach((answer, answerIndex) => {
+    const row = rows[answerIndex];
+    if (!row) {
+      return;
+    }
+
+    const answerInput = row.querySelector(".answer-input");
+    const pointsInput = row.querySelector(".points-input");
+    const wrong = Boolean(answer.wrong);
+
+    answerInput.value = answer.answer;
+    setAnswerWrongState(row, wrong, { initial: true });
+    pointsInput.value = String(wrong ? 100 : parsePoints(answer.points));
+  });
+
+  return answersToApply.length;
+}
+
+function isLikelyAnswerOnlyLine(line) {
+  const answer = cleanOcrAnswerText(line);
+  return Boolean(answer) && !isStandalonePointLine(answer) && !isOcrIgnoredLine(answer);
+}
+
+function isStandalonePointLine(line) {
+  return /^\d{1,3}\s*(?:pts?|points?|%)?$/i.test(cleanOcrLine(line));
+}
+
+function parseStandalonePoints(line) {
+  const match = cleanOcrLine(line).match(/\d{1,3}/);
+  return match ? parsePoints(match[0]) : 0;
+}
+
+function isOcrIgnoredLine(line) {
+  const normalized = cleanOcrLine(line)
+    .toLowerCase()
+    .replace(/[^a-z0-9\s]/g, "")
+    .trim();
+
+  return (
+    !normalized ||
+    /^(answers?|category|correct|date|goalless|leaderboard|overall|player|players|points?|rank|result|results|score|share)$/.test(
+      normalized,
+    ) ||
+    /^(final score|game over|overall score|total)\b/.test(normalized) ||
+    /\b(final score|overall score|total)\b/.test(normalized)
+  );
+}
+
+function cleanOcrAnswerText(text) {
+  return cleanOcrLine(text)
+    .replace(OCR_WRONG_PATTERN, " ")
+    .replace(/\b(?:answer|correct|pts?|points?)\b/gi, " ")
+    .replace(/^\d{1,2}\s*[).:-]?\s+/, "")
+    .replace(/^[\s:;,.|_\-\u2013\u2014]+/, "")
+    .replace(/[\s:;,.|_\-\u2013\u2014]+$/, "")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function cleanOcrLine(line) {
+  return String(line || "")
+    .replace(/[\u2018\u2019]/g, "'")
+    .replace(/[\u201c\u201d]/g, '"')
+    .replace(/[|*_]+/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function escapeRegExp(value) {
+  return String(value).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+function setScreenshotBusy(card, isBusy) {
+  card.classList.toggle("is-importing-screenshot", isBusy);
+  const button = card.querySelector(".screenshot-pick-button");
+  if (button) {
+    button.textContent = isBusy ? "Reading..." : "Choose screenshot";
+  }
+}
+
+function setScreenshotStatus(card, message, isError = false) {
+  const status = card.querySelector(".screenshot-status");
+  if (!status) {
+    return;
+  }
+
+  status.textContent = message;
+  status.classList.toggle("is-error", Boolean(isError));
+}
+
+function updateScreenshotImportAvailability(card, isDisabled) {
+  const input = card.querySelector(".screenshot-input");
+  const button = card.querySelector(".screenshot-pick-button");
+  const dropzone = card.querySelector(".screenshot-dropzone");
+
+  if (input) {
+    input.disabled = isDisabled;
+  }
+
+  if (button) {
+    button.disabled = isDisabled;
+  }
+
+  if (dropzone) {
+    dropzone.classList.toggle("is-disabled", isDisabled);
+    dropzone.setAttribute("aria-disabled", String(isDisabled));
+    dropzone.tabIndex = isDisabled ? -1 : 0;
+  }
+}
+
+function isScreenshotImportDisabled(card) {
+  return (
+    card.classList.contains("is-submitted") ||
+    Boolean(state.savingPlayer) ||
+    state.importingPlayerIndex !== null
+  );
 }
 
 async function loadRounds() {
@@ -956,6 +1975,7 @@ function resetRoundInputs() {
     card.querySelectorAll(".answer-status-toggle").forEach((button) => {
       button.disabled = false;
     });
+    setScreenshotStatus(card, "");
     card.querySelector(".player-total strong").textContent = "0";
   });
 
@@ -978,6 +1998,7 @@ function clearPlayerInputs(playerIndex) {
   card.querySelectorAll(".answer-status-toggle").forEach((button) => {
     button.disabled = false;
   });
+  setScreenshotStatus(card, "");
   card.querySelector(".player-total strong").textContent = "0";
 }
 
@@ -1911,19 +2932,36 @@ function updateDateAvailability() {
     const existingEntry = getExistingPlayerEntryForDate(selectedDate, playerName);
     const isSavingThisPlayer = state.savingPlayer === playerName;
     const isSavingAnotherPlayer = Boolean(state.savingPlayer) && !isSavingThisPlayer;
+    const isImportingThisPlayer = state.importingPlayerIndex === playerIndex;
+    const isImportingAnotherPlayer =
+      state.importingPlayerIndex !== null && !isImportingThisPlayer;
+    const inputsLocked = Boolean(existingEntry) || isImportingThisPlayer;
 
     if (existingEntry) {
       clearPlayerInputs(playerIndex);
     }
     card.classList.toggle("is-submitted", Boolean(existingEntry));
     card.querySelectorAll(".answer-input, .answer-status-toggle").forEach((input) => {
-      input.disabled = Boolean(existingEntry);
+      input.disabled = inputsLocked;
     });
     card.querySelectorAll(".answer-row").forEach((row) => {
-      row.querySelector(".points-input").disabled = Boolean(existingEntry) || isAnswerWrong(row);
+      row.querySelector(".points-input").disabled = inputsLocked || isAnswerWrong(row);
     });
-    button.disabled = isSavingAnotherPlayer || isSavingThisPlayer || Boolean(existingEntry);
-    button.textContent = isSavingThisPlayer ? "Saving..." : `Save ${playerName}`;
+    updateScreenshotImportAvailability(
+      card,
+      Boolean(existingEntry) ||
+        isSavingAnotherPlayer ||
+        isSavingThisPlayer ||
+        isImportingAnotherPlayer ||
+        isImportingThisPlayer,
+    );
+    button.disabled =
+      isSavingAnotherPlayer || isSavingThisPlayer || isImportingThisPlayer || Boolean(existingEntry);
+    button.textContent = isImportingThisPlayer
+      ? "Reading screenshot..."
+      : isSavingThisPlayer
+        ? "Saving..."
+        : `Save ${playerName}`;
     button.title = existingEntry
       ? `${playerName} already has a score for ${formatDate(selectedDate)}.`
       : "";
