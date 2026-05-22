@@ -405,8 +405,12 @@ function normalizeDraft(draft, players) {
             answer: String(savedAnswer.answer || ""),
             points: savedAnswer.points === undefined ? "" : String(savedAnswer.points),
             wrong: Boolean(savedAnswer.wrong),
+            perfect: Boolean(savedAnswer.perfect),
           };
         }),
+        screenshotTotal: Number.isFinite(Number(draftPlayer.screenshotTotal))
+          ? Number(draftPlayer.screenshotTotal)
+          : null,
       };
     }),
   };
@@ -460,9 +464,17 @@ function renderPlayerForms() {
       answersList.appendChild(createAnswerRow(answerIndex, draftPlayer?.answers?.[answerIndex]));
     }
 
+    if (Number.isFinite(Number(draftPlayer?.screenshotTotal))) {
+      card.dataset.screenshotTotal = String(Number(draftPlayer.screenshotTotal));
+    }
+
     total.textContent = String(calculateCardTotal(card));
 
-    card.addEventListener("input", () => {
+    card.addEventListener("input", (event) => {
+      if (event.target.classList.contains("points-input")) {
+        clearScreenshotTotalOverride(card);
+        clearPerfectAnswerState(event.target.closest(".answer-row"));
+      }
       updatePlayerCardTotal(card);
     });
     saveButton.addEventListener("click", () => {
@@ -495,6 +507,7 @@ function createAnswerRow(answerIndex, savedAnswer = null) {
   statusButton.type = "button";
   statusButton.className = "answer-status-toggle";
   statusButton.addEventListener("click", () => {
+    clearScreenshotTotalOverride(row.closest(".player-card"));
     setAnswerWrongState(row, !isAnswerWrong(row));
     updatePlayerCardTotal(row.closest(".player-card"));
     persistDraft();
@@ -511,6 +524,10 @@ function createAnswerRow(answerIndex, savedAnswer = null) {
 
   row.append(answerInput, statusButton, pointsInput);
   setAnswerWrongState(row, Boolean(savedAnswer?.wrong), { initial: true });
+  if (savedAnswer?.perfect && !savedAnswer?.wrong) {
+    row.dataset.perfect = "true";
+    row.classList.add("is-perfect");
+  }
   return row;
 }
 
@@ -627,6 +644,11 @@ async function handleScreenshotFile(file, playerIndex, card) {
     }
 
     const importedCount = applyScreenshotAnswersToCard(card, parsed.answers);
+    if (Number.isFinite(parsed.total)) {
+      card.dataset.screenshotTotal = String(parsed.total);
+    } else {
+      clearScreenshotTotalOverride(card);
+    }
     persistDraft();
     updatePlayerCardTotal(card);
     setScreenshotStatus(
@@ -685,9 +707,10 @@ async function recognizeStructuredScoreScreenshot(file, card) {
       );
       const answer = cleanStructuredAnswerText(answerText) || `Answer ${index + 1}`;
       const wrong = row.kind === "wrong";
-      let points = wrong ? 100 : null;
+      const perfect = row.kind === "perfect";
+      let points = wrong ? 100 : perfect ? 0 : null;
 
-      if (!wrong) {
+      if (!wrong && !perfect) {
         const scoreText = await recognizeScoreCrop(
           sourceCanvas,
           getScoreValueCrop(sourceCanvas, row),
@@ -699,6 +722,7 @@ async function recognizeStructuredScoreScreenshot(file, card) {
       answers.push({
         answer,
         wrong,
+        perfect,
         points,
       });
     }
@@ -709,10 +733,11 @@ async function recognizeStructuredScoreScreenshot(file, card) {
       ocr,
     );
     const total = parseScreenshotScoreValue(totalText, { max: 999 });
+    const reconciled = reconcileStructuredScores(answers, total);
 
     return {
-      answers: reconcileStructuredScores(answers, total),
-      total,
+      answers: reconciled.answers,
+      total: reconciled.total,
     };
   } finally {
     await ocr.terminate();
@@ -839,6 +864,7 @@ function detectScoreScreenshotLayout(canvas) {
     colored: 0,
     red: 0,
     green: 0,
+    perfect: 0,
   }));
 
   for (let y = 0; y < height; y += 1) {
@@ -919,6 +945,7 @@ function getScoreRowBounds(image, segment) {
   let xMax = 0;
   let redPixels = 0;
   let greenPixels = 0;
+  let perfectPixels = 0;
 
   for (let y = segment.yMin; y <= segment.yMax; y += 1) {
     for (let x = 0; x < width; x += 1) {
@@ -938,6 +965,8 @@ function getScoreRowBounds(image, segment) {
       xMax = Math.max(xMax, x);
       if (kind === "red") {
         redPixels += 1;
+      } else if (kind === "perfect") {
+        perfectPixels += 1;
       } else {
         greenPixels += 1;
       }
@@ -951,10 +980,24 @@ function getScoreRowBounds(image, segment) {
     xMax: Math.min(width - 1, xMax),
     yMin: Math.max(0, segment.yMin - yMargin),
     yMax: Math.min(height - 1, segment.yMax + yMargin),
+    contentYMin: segment.yMin,
+    contentYMax: segment.yMax,
     height: segment.yMax - segment.yMin + 1,
-    coloredPixels: redPixels + greenPixels,
-    kind: redPixels > greenPixels ? "wrong" : "correct",
+    coloredPixels: redPixels + greenPixels + perfectPixels,
+    kind: getScoreRowKind({ redPixels, greenPixels, perfectPixels }),
   };
+}
+
+function getScoreRowKind({ redPixels, greenPixels, perfectPixels }) {
+  if (redPixels > greenPixels && redPixels > perfectPixels) {
+    return "wrong";
+  }
+
+  if (perfectPixels > redPixels && perfectPixels >= greenPixels * 0.8) {
+    return "perfect";
+  }
+
+  return "correct";
 }
 
 function getScorePixelKind(red, green, blue, alpha) {
@@ -974,6 +1017,17 @@ function getScorePixelKind(red, green, blue, alpha) {
     return "red";
   }
 
+  if (
+    maximum >= 145 &&
+    minimum >= 70 &&
+    saturation >= 28 &&
+    red <= 230 &&
+    (blue >= 145 || green >= 145) &&
+    (blue > red + 4 || green > red + 10 || blue > green + 20)
+  ) {
+    return "perfect";
+  }
+
   return "";
 }
 
@@ -983,24 +1037,36 @@ function getScoreAnswerCrop(canvas, row) {
     canvas.width,
     Math.max(x + 80, Math.round(canvas.width * SCORE_SCREENSHOT_ANSWER_COLUMN_RATIO)),
   );
+  const verticalCrop = getScoreRowInnerVerticalCrop(row);
 
   return normalizeCropBox({
     x,
-    y: row.yMin,
+    y: verticalCrop.y,
     width: rightEdge - x,
-    height: row.yMax - row.yMin + 1,
+    height: verticalCrop.height,
   }, canvas);
 }
 
 function getScoreValueCrop(canvas, row) {
   const x = Math.max(0, Math.round(canvas.width * SCORE_SCREENSHOT_SCORE_COLUMN_RATIO));
+  const verticalCrop = getScoreRowInnerVerticalCrop(row);
 
   return normalizeCropBox({
     x,
-    y: row.yMin,
+    y: verticalCrop.y,
     width: canvas.width - x,
-    height: row.yMax - row.yMin + 1,
+    height: verticalCrop.height,
   }, canvas);
+}
+
+function getScoreRowInnerVerticalCrop(row) {
+  const contentHeight = row.contentYMax - row.contentYMin + 1;
+  const inset = Math.max(1, Math.round(contentHeight * 0.08));
+
+  return {
+    y: row.contentYMin + inset,
+    height: Math.max(1, contentHeight - inset * 2),
+  };
 }
 
 function getScoreTotalCrop(canvas, firstRow) {
@@ -1051,6 +1117,7 @@ function createWhiteTextMaskCanvas(sourceCanvas, crop) {
   );
 
   const rawImage = rawContext.getImageData(0, 0, scaledWidth, scaledHeight);
+  const textMask = createWhiteTextMask(rawImage);
   const outputCanvas = document.createElement("canvas");
   outputCanvas.width = scaledWidth + SCORE_SCREENSHOT_TEXT_PADDING * 2;
   outputCanvas.height = scaledHeight + SCORE_SCREENSHOT_TEXT_PADDING * 2;
@@ -1061,16 +1128,10 @@ function createWhiteTextMaskCanvas(sourceCanvas, crop) {
 
   for (let y = 0; y < scaledHeight; y += 1) {
     for (let x = 0; x < scaledWidth; x += 1) {
-      const sourceOffset = (y * scaledWidth + x) * 4;
       const destinationX = x + SCORE_SCREENSHOT_TEXT_PADDING;
       const destinationY = y + SCORE_SCREENSHOT_TEXT_PADDING;
       const destinationOffset = (destinationY * outputCanvas.width + destinationX) * 4;
-      const isText = isWhiteTextPixel(
-        rawImage.data[sourceOffset],
-        rawImage.data[sourceOffset + 1],
-        rawImage.data[sourceOffset + 2],
-        rawImage.data[sourceOffset + 3],
-      );
+      const isText = textMask[y * scaledWidth + x];
 
       outputImage.data[destinationOffset] = isText ? 0 : 255;
       outputImage.data[destinationOffset + 1] = isText ? 0 : 255;
@@ -1083,6 +1144,45 @@ function createWhiteTextMaskCanvas(sourceCanvas, crop) {
   return outputCanvas;
 }
 
+function createWhiteTextMask(image) {
+  const { width, height, data } = image;
+  const baseMask = new Uint8Array(width * height);
+  const dilatedMask = new Uint8Array(width * height);
+
+  for (let index = 0; index < width * height; index += 1) {
+    const offset = index * 4;
+    baseMask[index] = isWhiteTextPixel(
+      data[offset],
+      data[offset + 1],
+      data[offset + 2],
+      data[offset + 3],
+    )
+      ? 1
+      : 0;
+  }
+
+  for (let y = 0; y < height; y += 1) {
+    for (let x = 0; x < width; x += 1) {
+      const index = y * width + x;
+      if (!baseMask[index]) {
+        continue;
+      }
+
+      for (let offsetY = -1; offsetY <= 1; offsetY += 1) {
+        for (let offsetX = -1; offsetX <= 1; offsetX += 1) {
+          const nextX = x + offsetX;
+          const nextY = y + offsetY;
+          if (nextX >= 0 && nextX < width && nextY >= 0 && nextY < height) {
+            dilatedMask[nextY * width + nextX] = 1;
+          }
+        }
+      }
+    }
+  }
+
+  return dilatedMask;
+}
+
 function isWhiteTextPixel(red, green, blue, alpha) {
   if (alpha < 100) {
     return false;
@@ -1090,7 +1190,9 @@ function isWhiteTextPixel(red, green, blue, alpha) {
 
   const brightness = (red + green + blue) / 3;
   const spread = Math.max(red, green, blue) - Math.min(red, green, blue);
-  return brightness >= 145 && spread <= 92;
+  const minimum = Math.min(red, green, blue);
+
+  return brightness >= 190 && minimum >= 168 && spread <= 105;
 }
 
 function reconcileStructuredScores(answers, total) {
@@ -1103,21 +1205,37 @@ function reconcileStructuredScores(answers, total) {
     .filter((index) => index >= 0);
 
   if (Number.isFinite(total) && missingIndexes.length === 1) {
+    const perfectBonus = normalizedAnswers.filter((answer) => answer.perfect).length * 100;
     const knownTotal = normalizedAnswers.reduce(
       (sum, answer) => sum + (Number.isFinite(answer.points) ? answer.points : 0),
       0,
     );
-    const missingScore = total - knownTotal;
+    const missingScore = total + perfectBonus - knownTotal;
 
     if (missingScore >= 0 && missingScore <= 100) {
       normalizedAnswers[missingIndexes[0]].points = missingScore;
     }
   }
 
-  return normalizedAnswers.map((answer) => ({
+  const finalAnswers = normalizedAnswers.map((answer) => ({
     ...answer,
     points: Number.isFinite(answer.points) ? answer.points : 0,
   }));
+
+  return {
+    answers: finalAnswers,
+    total: Number.isFinite(total) ? total : calculateStructuredTotal(finalAnswers),
+  };
+}
+
+function calculateStructuredTotal(answers) {
+  const visibleScore = answers.reduce(
+    (sum, answer) => sum + (Number.isFinite(answer.points) ? answer.points : 0),
+    0,
+  );
+  const perfectBonus = answers.filter((answer) => answer.perfect).length * 100;
+
+  return Math.max(0, visibleScore - perfectBonus);
 }
 
 function parseScreenshotScoreValue(text, options = {}) {
@@ -1405,10 +1523,13 @@ function applyScreenshotAnswersToCard(card, answers) {
     const answerInput = row.querySelector(".answer-input");
     const pointsInput = row.querySelector(".points-input");
     const wrong = Boolean(answer.wrong);
+    const perfect = Boolean(answer.perfect);
 
     answerInput.value = answer.answer;
     setAnswerWrongState(row, wrong, { initial: true });
     pointsInput.value = String(wrong ? 100 : parsePoints(answer.points));
+    row.dataset.perfect = String(perfect);
+    row.classList.toggle("is-perfect", perfect);
   });
 
   return answersToApply.length;
@@ -1624,9 +1745,13 @@ function persistDraft() {
     categories,
     players: [...document.querySelectorAll(".player-card")].map((card) => ({
       name: card.querySelector(".player-name").value,
+      screenshotTotal: Number.isFinite(Number(card.dataset.screenshotTotal))
+        ? Number(card.dataset.screenshotTotal)
+        : null,
       answers: [...card.querySelectorAll(".answer-row")].map((row) => ({
         answer: row.querySelector(".answer-input").value,
         wrong: isAnswerWrong(row),
+        perfect: row.dataset.perfect === "true",
         points: row.querySelector(".points-input").value,
       })),
     })),
@@ -1948,6 +2073,7 @@ function getPlayerEntryFromCard(card, playerIndex) {
     return {
       answer: answer || `Answer ${answerIndex + 1}`,
       wrong,
+      perfect: row.dataset.perfect === "true",
       points,
     };
   });
@@ -1955,7 +2081,7 @@ function getPlayerEntryFromCard(card, playerIndex) {
   return {
     name,
     answers,
-    total: sumAnswers(answers),
+    total: getPlayerTotalFromCard(card, answers),
     savedAt: new Date().toISOString(),
   };
 }
@@ -1965,6 +2091,7 @@ function resetRoundInputs() {
   roundCategory.value = "";
 
   document.querySelectorAll(".player-card").forEach((card) => {
+    clearScreenshotTotalOverride(card);
     card.querySelectorAll(".answer-row").forEach((row) => {
       setAnswerWrongState(row, false, { initial: true });
     });
@@ -1988,6 +2115,7 @@ function clearPlayerInputs(playerIndex) {
     return;
   }
 
+  clearScreenshotTotalOverride(card);
   card.querySelectorAll(".answer-input, .points-input").forEach((input) => {
     input.value = "";
     input.disabled = false;
@@ -2790,9 +2918,9 @@ function renderHistoryPlayer(player, isWinner) {
         ${player.answers
           .map(
             (answer) => `
-              <li class="${answer.wrong ? "is-wrong" : ""}">
+              <li class="${answer.wrong ? "is-wrong" : answer.perfect ? "is-perfect" : ""}">
                 <span>${escapeHtml(answer.answer)}</span>
-                <span>${answer.wrong ? "Wrong · 100" : answer.points}</span>
+                <span>${getAnswerHistoryScoreLabel(answer)}</span>
               </li>
             `,
           )
@@ -2804,6 +2932,18 @@ function renderHistoryPlayer(player, isWinner) {
       </div>
     </section>
   `;
+}
+
+function getAnswerHistoryScoreLabel(answer) {
+  if (answer.wrong) {
+    return "Wrong · 100";
+  }
+
+  if (answer.perfect) {
+    return "Perfect · 0";
+  }
+
+  return String(answer.points);
 }
 
 function normalizeRound(round) {
@@ -2823,6 +2963,7 @@ function normalizeRound(round) {
         return {
           answer: String(answer.answer || `Answer ${answerIndex + 1}`),
           wrong,
+          perfect: Boolean(answer.perfect),
           points: wrong ? 100 : parsePoints(answer.points),
         };
       });
@@ -3015,10 +3156,37 @@ function sortRounds() {
 }
 
 function calculateCardTotal(card) {
+  const screenshotTotal = Number(card?.dataset.screenshotTotal);
+  if (Number.isFinite(screenshotTotal)) {
+    return screenshotTotal;
+  }
+
   return [...card.querySelectorAll(".points-input")].reduce(
     (total, input) => total + parsePoints(input.value),
     0,
   );
+}
+
+function getPlayerTotalFromCard(card, answers) {
+  const screenshotTotal = Number(card?.dataset.screenshotTotal);
+  return Number.isFinite(screenshotTotal) ? screenshotTotal : sumAnswers(answers);
+}
+
+function clearScreenshotTotalOverride(card) {
+  if (!card) {
+    return;
+  }
+
+  delete card.dataset.screenshotTotal;
+}
+
+function clearPerfectAnswerState(row) {
+  if (!row) {
+    return;
+  }
+
+  row.dataset.perfect = "false";
+  row.classList.remove("is-perfect");
 }
 
 function updatePlayerCardTotal(card) {
@@ -3039,6 +3207,9 @@ function setAnswerWrongState(row, isWrong, options = {}) {
 
   row.dataset.wrong = String(isWrong);
   row.classList.toggle("is-wrong", isWrong);
+  if (isWrong || !options.keepPerfect) {
+    clearPerfectAnswerState(row);
+  }
   statusButton.setAttribute("aria-pressed", String(isWrong));
   statusButton.textContent = isWrong ? "Wrong" : "Correct";
   statusButton.title = isWrong

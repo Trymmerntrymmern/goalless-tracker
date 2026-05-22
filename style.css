@@ -840,6 +840,12 @@ input:focus {
   background: rgba(255, 130, 150, 0.1);
 }
 
+.answer-row.is-perfect .points-input {
+  color: #effcff;
+  border-color: rgba(143, 218, 255, 0.54);
+  background: linear-gradient(135deg, rgba(122, 228, 255, 0.18), rgba(201, 149, 255, 0.16));
+}
+
 .points-input {
   text-align: right;
 }
@@ -1134,6 +1140,19 @@ input:focus {
 
 .answer-history li.is-wrong span:last-child {
   color: var(--danger);
+}
+
+.answer-history li.is-perfect {
+  border-color: rgba(143, 218, 255, 0.46);
+  color: #effcff;
+  background:
+    linear-gradient(90deg, rgba(122, 228, 255, 0.18), rgba(201, 149, 255, 0.12)),
+    rgba(9, 42, 60, 0.24);
+  box-shadow: inset 3px 0 0 rgba(143, 218, 255, 0.78);
+}
+
+.answer-history li.is-perfect span:last-child {
+  color: #bdefff;
 }
 
 .history-total {
