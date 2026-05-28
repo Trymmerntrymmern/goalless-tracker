@@ -262,6 +262,7 @@ const VIEW_TITLES = {
   trends: "Performance trends",
   history: "Round history",
 };
+let seasonSlideshowTimer = null;
 
 init();
 
@@ -2458,6 +2459,61 @@ function renderLeaderboard() {
     return;
   }
 
+  const leaderTotal = rows[0]?.total || 0;
+
+  leaderboard.innerHTML = `
+    <div class="overall-leaderboard" aria-label="Overall leaderboard">
+      ${rows
+        .map((row, index) => {
+          const nextRow = rows[index + 1];
+          const gapText =
+            index === 0
+              ? nextRow
+                ? `${formatNumber(nextRow.total - row.total)} ahead`
+                : "Leader"
+              : `${formatNumber(row.total - leaderTotal)} behind`;
+
+          return `
+            <article class="overall-rank-card ${index === 0 ? "is-first" : "is-second"}">
+              <div class="overall-rank-top">
+                <span class="overall-rank-number">${index + 1}</span>
+                <div>
+                  <p class="leader-kicker">${index === 0 ? "First place" : "Second place"}</p>
+                  <h3>${escapeHtml(row.name)}</h3>
+                  <span>${gapText}</span>
+                </div>
+              </div>
+              <div class="overall-rank-stats">
+                <div>
+                  <span>Total</span>
+                  <strong>${formatNumber(row.total)}</strong>
+                </div>
+                <div>
+                  <span>Average</span>
+                  <strong>${formatAverage(row.average)}</strong>
+                </div>
+                <div>
+                  <span>Wins</span>
+                  <strong>${row.wins}</strong>
+                </div>
+              </div>
+            </article>
+          `;
+        })
+        .join("")}
+    </div>
+  `;
+}
+
+function renderLeaderboardLegacy() {
+  const rows = buildLeaderboard();
+  leaderboard.innerHTML = "";
+
+  if (!rows.length) {
+    leaderboard.innerHTML = '<div class="empty-state">Save a round to start the table.</div>';
+    return;
+  }
+
   const leaderTotal = rows[0].total;
 
   leaderboard.innerHTML = `
@@ -2632,6 +2688,225 @@ function buildLeaderboard() {
 }
 
 function renderHistoricalStats() {
+  const importedRounds = getHistoricalRoundCount();
+  const importedDraws = HISTORICAL_SEASONS.reduce((total, season) => total + season.draws, 0);
+  const seasonSummaries = getSeasonSummaries().sort((a, b) => b.year - a.year);
+  const completedFirestoreRounds = getCompletedFirestoreRounds().length;
+
+  historicalSummary.innerHTML = `
+    <div>
+      <p class="eyebrow">Historical stats</p>
+      <h3>Season archive</h3>
+    </div>
+    <p>${importedRounds} imported rounds across ${seasonSummaries.length} seasons, ${importedDraws} draw${importedDraws === 1 ? "" : "s"}, plus ${completedFirestoreRounds} completed Firestore ${completedFirestoreRounds === 1 ? "round" : "rounds"}.</p>
+  `;
+
+  seasonStats.innerHTML = renderSeasonSlideshow(seasonSummaries);
+  setupSeasonSlideshow();
+}
+
+function renderSeasonSlideshow(seasons) {
+  if (!seasons.length) {
+    return '<div class="empty-state">Historical season data is not available yet.</div>';
+  }
+
+  return `
+    <section class="season-showcase" data-season-slideshow aria-label="Historical season slideshow">
+      <div class="season-year-rail" role="tablist" aria-label="Historical seasons">
+        ${seasons.map((season, index) => renderSeasonSlideTrigger(season, index)).join("")}
+      </div>
+      <div class="season-slide-stage">
+        ${seasons.map((season, index) => renderSeasonSlide(season, index)).join("")}
+      </div>
+    </section>
+  `;
+}
+
+function renderSeasonSlideTrigger(season, index) {
+  const leader = season.players[0];
+  const isActive = index === 0;
+
+  return `
+    <button
+      class="season-slide-trigger ${isActive ? "is-active" : ""}"
+      type="button"
+      id="season-tab-${season.year}"
+      role="tab"
+      aria-selected="${isActive ? "true" : "false"}"
+      aria-controls="season-slide-${season.year}"
+      tabindex="${isActive ? "0" : "-1"}"
+      data-season-index="${index}"
+    >
+      <span class="season-trigger-year" aria-label="${season.year}">
+        ${renderSlideshowText(String(season.year))}
+      </span>
+      <span class="season-trigger-meta">${season.rounds} rounds / ${escapeHtml(leader?.name || "Leader")} led</span>
+    </button>
+  `;
+}
+
+function renderSlideshowText(text) {
+  return [...text]
+    .map(
+      (char, index) =>
+        `<span class="season-trigger-char" style="--char-index:${index}"><span>${escapeHtml(char)}</span><span>${escapeHtml(char)}</span></span>`,
+    )
+    .join("");
+}
+
+function renderSeasonSlide(season, index) {
+  const leader = season.players[0];
+  const runnerUp = season.players[1];
+  const gap = leader && runnerUp ? runnerUp.total - leader.total : 0;
+  const isActive = index === 0;
+
+  return `
+    <article
+      class="season-slide ${isActive ? "is-active" : ""}"
+      id="season-slide-${season.year}"
+      role="tabpanel"
+      aria-labelledby="season-tab-${season.year}"
+      aria-hidden="${isActive ? "false" : "true"}"
+      data-season-slide-panel="${index}"
+    >
+      <div class="season-slide-visual" aria-hidden="true">
+        <div>
+          <span>Season</span>
+          <strong>${season.year}</strong>
+        </div>
+        <p>${escapeHtml(leader?.name || "Leader")}</p>
+        <small>${formatNumber(Math.max(0, gap))} point lead</small>
+      </div>
+      <div class="season-slide-content">
+        <div class="season-slide-top">
+          <div>
+            <p class="eyebrow">Breakdown</p>
+            <h3>${season.year}</h3>
+          </div>
+          <div class="season-slide-meta">
+            <div><span>Rounds</span><strong>${season.rounds}</strong></div>
+            <div><span>Draws</span><strong>${season.draws}</strong></div>
+            <div><span>Gap</span><strong>${formatNumber(Math.max(0, gap))}</strong></div>
+          </div>
+        </div>
+        <div class="season-slide-table">
+          ${season.players
+            .map((stats, playerIndex) => renderSeasonSlidePlayer(stats, season.rounds, playerIndex))
+            .join("")}
+        </div>
+      </div>
+    </article>
+  `;
+}
+
+function renderSeasonSlidePlayer(stats, seasonRounds, index) {
+  return `
+    <section class="season-slide-player ${index === 0 ? "is-season-leader" : ""}">
+      <div class="season-slide-player-name">
+        <span>${index + 1}</span>
+        <div>
+          <h4>${escapeHtml(stats.name)}</h4>
+          <small>${formatPercent(stats.wins / seasonRounds)} win rate</small>
+        </div>
+      </div>
+      <div class="season-slide-stat">
+        <span>Total</span>
+        <strong>${formatNumber(stats.total)}</strong>
+      </div>
+      <div class="season-slide-stat">
+        <span>Average</span>
+        <strong>${formatAverage(stats.average)}</strong>
+      </div>
+      <div class="season-slide-stat">
+        <span>Wins</span>
+        <strong>${stats.wins}</strong>
+      </div>
+    </section>
+  `;
+}
+
+function setupSeasonSlideshow() {
+  if (seasonSlideshowTimer) {
+    window.clearInterval(seasonSlideshowTimer);
+    seasonSlideshowTimer = null;
+  }
+
+  const slideshow = seasonStats.querySelector("[data-season-slideshow]");
+  if (!slideshow) {
+    return;
+  }
+
+  const triggers = [...slideshow.querySelectorAll("[data-season-index]")];
+  const slides = [...slideshow.querySelectorAll("[data-season-slide-panel]")];
+  let activeIndex = triggers.findIndex((trigger) => trigger.classList.contains("is-active"));
+
+  if (activeIndex < 0) {
+    activeIndex = 0;
+  }
+
+  const setSlide = (nextIndex) => {
+    activeIndex = (nextIndex + triggers.length) % triggers.length;
+
+    triggers.forEach((trigger, index) => {
+      const isActive = index === activeIndex;
+      trigger.classList.toggle("is-active", isActive);
+      trigger.setAttribute("aria-selected", isActive ? "true" : "false");
+      trigger.tabIndex = isActive ? 0 : -1;
+    });
+
+    slides.forEach((slide, index) => {
+      const isActive = index === activeIndex;
+      slide.classList.toggle("is-active", isActive);
+      slide.setAttribute("aria-hidden", isActive ? "false" : "true");
+    });
+  };
+
+  triggers.forEach((trigger, index) => {
+    trigger.addEventListener("mouseenter", () => setSlide(index));
+    trigger.addEventListener("focus", () => setSlide(index));
+    trigger.addEventListener("click", () => setSlide(index));
+  });
+
+  slideshow.addEventListener("keydown", (event) => {
+    if (!["ArrowLeft", "ArrowRight", "ArrowUp", "ArrowDown"].includes(event.key)) {
+      return;
+    }
+
+    event.preventDefault();
+    const direction = event.key === "ArrowLeft" || event.key === "ArrowUp" ? -1 : 1;
+    setSlide(activeIndex + direction);
+    triggers[activeIndex].focus();
+  });
+
+  const shouldAutoRotate =
+    triggers.length > 1 &&
+    !window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+
+  if (!shouldAutoRotate) {
+    return;
+  }
+
+  const startTimer = () => {
+    if (seasonSlideshowTimer) {
+      window.clearInterval(seasonSlideshowTimer);
+    }
+    seasonSlideshowTimer = window.setInterval(() => setSlide(activeIndex + 1), 5500);
+  };
+  const stopTimer = () => {
+    if (seasonSlideshowTimer) {
+      window.clearInterval(seasonSlideshowTimer);
+      seasonSlideshowTimer = null;
+    }
+  };
+
+  slideshow.addEventListener("mouseenter", stopTimer);
+  slideshow.addEventListener("mouseleave", startTimer);
+  slideshow.addEventListener("focusin", stopTimer);
+  slideshow.addEventListener("focusout", startTimer);
+  startTimer();
+}
+
+function renderHistoricalStatsLegacy() {
   const importedRounds = getHistoricalRoundCount();
   const importedDraws = HISTORICAL_SEASONS.reduce((total, season) => total + season.draws, 0);
   const seasonSummaries = getSeasonSummaries();

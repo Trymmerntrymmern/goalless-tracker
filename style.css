@@ -675,6 +675,137 @@ h3 {
   gap: 8px;
 }
 
+.overall-leaderboard {
+  display: grid;
+  grid-template-columns: minmax(0, 1.12fr) minmax(0, 0.88fr);
+  align-items: stretch;
+  gap: 12px;
+}
+
+.overall-rank-card {
+  position: relative;
+  display: grid;
+  align-content: space-between;
+  gap: 18px;
+  min-width: 0;
+  min-height: 178px;
+  padding: 16px;
+  border: 1px solid rgba(176, 218, 255, 0.14);
+  border-radius: 8px;
+  background:
+    linear-gradient(135deg, rgba(255, 255, 255, 0.055), rgba(255, 255, 255, 0.01)),
+    rgba(3, 15, 36, 0.58);
+  overflow: hidden;
+}
+
+.overall-rank-card::after {
+  content: "";
+  position: absolute;
+  inset: auto 14px 12px auto;
+  width: 82px;
+  height: 82px;
+  border: 1px solid rgba(176, 218, 255, 0.1);
+  border-radius: 999px;
+  opacity: 0.28;
+}
+
+.overall-rank-card.is-first {
+  min-height: 210px;
+  border-color: rgba(240, 192, 64, 0.48);
+  background:
+    linear-gradient(135deg, rgba(240, 192, 64, 0.14), rgba(255, 255, 255, 0.025)),
+    rgba(3, 15, 36, 0.66);
+}
+
+.overall-rank-card.is-first::after {
+  border-color: rgba(240, 192, 64, 0.34);
+}
+
+.overall-rank-card.is-second {
+  margin-top: 18px;
+}
+
+.overall-rank-top {
+  position: relative;
+  z-index: 1;
+  display: flex;
+  align-items: flex-start;
+  gap: 14px;
+  min-width: 0;
+}
+
+.overall-rank-top > div {
+  min-width: 0;
+}
+
+.overall-rank-top h3 {
+  margin-top: 4px;
+  font-size: clamp(1.45rem, 2.6vw, 2.1rem);
+  line-height: 1;
+  overflow-wrap: anywhere;
+}
+
+.overall-rank-top > div > span {
+  display: block;
+  margin-top: 7px;
+  color: var(--muted);
+  font-size: 0.88rem;
+  font-weight: 850;
+}
+
+.overall-rank-number {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 auto;
+  width: 44px;
+  height: 44px;
+  border: 1px solid rgba(240, 192, 64, 0.48);
+  border-radius: 999px;
+  color: var(--gold);
+  background: rgba(240, 192, 64, 0.1);
+  font-size: 1.1rem;
+  font-weight: 950;
+}
+
+.overall-rank-stats {
+  position: relative;
+  z-index: 1;
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.overall-rank-stats div {
+  min-width: 0;
+  padding: 10px;
+  border: 1px solid rgba(176, 218, 255, 0.11);
+  border-radius: 8px;
+  background: rgba(2, 9, 22, 0.28);
+}
+
+.overall-rank-stats span {
+  display: block;
+  color: var(--soft);
+  font-size: 0.72rem;
+  font-weight: 900;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.overall-rank-stats strong {
+  display: block;
+  margin-top: 5px;
+  color: var(--text);
+  font-size: clamp(1.18rem, 2.1vw, 1.55rem);
+  line-height: 1.05;
+  overflow-wrap: anywhere;
+}
+
+.overall-rank-card.is-first .overall-rank-stats strong {
+  color: var(--gold);
+}
+
 .leaderboard-table {
   display: grid;
   gap: 8px;
@@ -786,6 +917,305 @@ h3 {
   grid-template-columns: 1fr;
   gap: 14px;
   margin-top: 14px;
+}
+
+.season-showcase {
+  display: grid;
+  grid-template-columns: minmax(160px, 0.36fr) minmax(0, 1fr);
+  gap: 14px;
+  min-width: 0;
+}
+
+.season-year-rail {
+  display: grid;
+  align-content: start;
+  gap: 8px;
+}
+
+.season-slide-trigger {
+  display: grid;
+  gap: 7px;
+  min-height: 92px;
+  padding: 13px;
+  border: 1px solid rgba(176, 218, 255, 0.14);
+  border-radius: 8px;
+  color: var(--muted);
+  background: rgba(3, 15, 36, 0.42);
+  cursor: pointer;
+  text-align: left;
+  transition:
+    background 180ms ease,
+    border-color 180ms ease,
+    color 180ms ease;
+}
+
+.season-slide-trigger:hover,
+.season-slide-trigger:focus-visible,
+.season-slide-trigger.is-active {
+  border-color: rgba(240, 192, 64, 0.46);
+  color: var(--text);
+  background: rgba(240, 192, 64, 0.08);
+}
+
+.season-slide-trigger:focus-visible {
+  outline: 0;
+  box-shadow: 0 0 0 3px var(--focus-ring);
+}
+
+.season-trigger-year {
+  color: var(--text);
+  font-size: clamp(1.6rem, 3.8vw, 2.8rem);
+  font-weight: 950;
+  line-height: 0.9;
+}
+
+.season-trigger-char {
+  position: relative;
+  display: inline-block;
+  overflow: hidden;
+  height: 1em;
+  vertical-align: bottom;
+}
+
+.season-trigger-char span {
+  display: block;
+  transition:
+    opacity 240ms ease,
+    transform 300ms cubic-bezier(0.25, 0.46, 0.45, 0.94);
+  transition-delay: calc(var(--char-index) * 24ms);
+}
+
+.season-trigger-char span:first-child {
+  opacity: 0.24;
+  transform: translateY(0);
+}
+
+.season-trigger-char span:last-child {
+  position: absolute;
+  inset: 0 auto auto 0;
+  opacity: 1;
+  transform: translateY(110%);
+}
+
+.season-slide-trigger.is-active .season-trigger-char span:first-child,
+.season-slide-trigger:hover .season-trigger-char span:first-child,
+.season-slide-trigger:focus-visible .season-trigger-char span:first-child {
+  opacity: 0.1;
+  transform: translateY(-110%);
+}
+
+.season-slide-trigger.is-active .season-trigger-char span:last-child,
+.season-slide-trigger:hover .season-trigger-char span:last-child,
+.season-slide-trigger:focus-visible .season-trigger-char span:last-child {
+  transform: translateY(0);
+}
+
+.season-trigger-meta {
+  color: var(--muted);
+  font-size: 0.78rem;
+  font-weight: 850;
+}
+
+.season-slide-stage {
+  display: grid;
+  min-width: 0;
+  min-height: 332px;
+  overflow: hidden;
+}
+
+.season-slide-stage > * {
+  grid-area: 1 / 1;
+}
+
+.season-slide {
+  display: grid;
+  grid-template-columns: minmax(210px, 0.72fr) minmax(0, 1.28fr);
+  gap: 14px;
+  min-width: 0;
+  padding: 14px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: rgba(5, 19, 45, 0.58);
+  clip-path: polygon(0 0, 100% 0, 100% 0, 0 0);
+  opacity: 0;
+  pointer-events: none;
+  transition:
+    clip-path 650ms cubic-bezier(0.33, 1, 0.68, 1),
+    opacity 240ms ease;
+}
+
+.season-slide.is-active {
+  clip-path: polygon(0 0, 100% 0, 100% 100%, 0 100%);
+  opacity: 1;
+  pointer-events: auto;
+}
+
+.season-slide-visual {
+  position: relative;
+  display: grid;
+  align-content: space-between;
+  min-height: 304px;
+  padding: 16px;
+  border: 1px solid rgba(176, 218, 255, 0.13);
+  border-radius: 8px;
+  background:
+    linear-gradient(90deg, transparent calc(50% - 1px), rgba(176, 218, 255, 0.14) calc(50% - 1px), rgba(176, 218, 255, 0.14) calc(50% + 1px), transparent calc(50% + 1px)),
+    linear-gradient(rgba(176, 218, 255, 0.08) 1px, transparent 1px),
+    rgba(2, 9, 22, 0.36);
+  background-size: 100% 100%, 42px 42px, 100% 100%;
+  overflow: hidden;
+}
+
+.season-slide-visual::after {
+  content: "";
+  position: absolute;
+  inset: 28% 18%;
+  border: 1px solid rgba(240, 192, 64, 0.28);
+  border-radius: 999px;
+}
+
+.season-slide-visual > * {
+  position: relative;
+  z-index: 1;
+}
+
+.season-slide-visual span,
+.season-slide-visual small {
+  display: block;
+  color: var(--soft);
+  font-size: 0.74rem;
+  font-weight: 900;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+}
+
+.season-slide-visual strong {
+  display: block;
+  margin-top: 6px;
+  color: var(--gold);
+  font-size: clamp(3.5rem, 8vw, 5.8rem);
+  line-height: 0.85;
+}
+
+.season-slide-visual p {
+  color: var(--text);
+  font-size: clamp(1.35rem, 3vw, 2.1rem);
+  font-weight: 900;
+  line-height: 1;
+  overflow-wrap: anywhere;
+}
+
+.season-slide-content {
+  display: grid;
+  align-content: start;
+  gap: 14px;
+  min-width: 0;
+}
+
+.season-slide-top {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 14px;
+}
+
+.season-slide-top > div:first-child {
+  min-width: 0;
+}
+
+.season-slide-meta {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(70px, 1fr));
+  gap: 8px;
+  min-width: min(100%, 270px);
+}
+
+.season-slide-meta div {
+  min-width: 0;
+  padding: 9px 10px;
+  border: 1px solid rgba(176, 218, 255, 0.11);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.035);
+}
+
+.season-slide-meta span,
+.season-slide-stat span {
+  display: block;
+  color: var(--soft);
+  font-size: 0.7rem;
+  font-weight: 900;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.season-slide-meta strong,
+.season-slide-stat strong {
+  display: block;
+  margin-top: 4px;
+  color: var(--text);
+  font-size: 1.06rem;
+  line-height: 1.1;
+}
+
+.season-slide-table {
+  display: grid;
+  gap: 8px;
+}
+
+.season-slide-player {
+  display: grid;
+  grid-template-columns: minmax(150px, 1fr) repeat(3, minmax(72px, 0.58fr));
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+  padding: 12px;
+  border: 1px solid rgba(176, 218, 255, 0.12);
+  border-radius: 8px;
+  background: rgba(3, 15, 36, 0.46);
+}
+
+.season-slide-player.is-season-leader {
+  border-color: rgba(240, 192, 64, 0.42);
+  background: rgba(240, 192, 64, 0.08);
+}
+
+.season-slide-player-name {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+}
+
+.season-slide-player-name > span {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 auto;
+  width: 30px;
+  height: 30px;
+  border: 1px solid rgba(240, 192, 64, 0.34);
+  border-radius: 999px;
+  color: var(--gold);
+  background: rgba(240, 192, 64, 0.08);
+  font-weight: 900;
+}
+
+.season-slide-player-name > div {
+  min-width: 0;
+}
+
+.season-slide-player h4 {
+  font-size: 1rem;
+  line-height: 1.15;
+  overflow-wrap: anywhere;
+}
+
+.season-slide-player small {
+  display: block;
+  margin-top: 4px;
+  color: var(--muted);
+  font-size: 0.76rem;
+  font-weight: 800;
 }
 
 .season-card {
@@ -1838,7 +2268,9 @@ input:focus {
   }
 
   .leaderboard-grid,
+  .overall-leaderboard,
   .season-stats,
+  .season-showcase,
   .chart-grid,
   .players-grid,
   .history-players,
@@ -1851,9 +2283,47 @@ input:focus {
   .today-empty-card,
   .today-waiting-card,
   .today-scoreline,
+  .season-slide,
+  .season-slide-player,
   .leaderboard-row,
   .season-player {
     grid-template-columns: 1fr;
+  }
+
+  .overall-rank-card,
+  .overall-rank-card.is-first,
+  .overall-rank-card.is-second {
+    min-height: 0;
+    margin-top: 0;
+  }
+
+  .overall-rank-stats,
+  .season-slide-meta {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+
+  .season-year-rail {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .season-slide-trigger {
+    min-height: 74px;
+  }
+
+  .season-slide-stage {
+    min-height: auto;
+  }
+
+  .season-slide {
+    position: relative;
+  }
+
+  .season-slide:not(.is-active) {
+    display: none;
+  }
+
+  .season-slide-visual {
+    min-height: 180px;
   }
 
   .today-card-header,
