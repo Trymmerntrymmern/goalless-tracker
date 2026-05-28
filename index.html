@@ -10,7 +10,7 @@
       href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700;800;900&display=swap"
       rel="stylesheet"
     />
-    <link rel="stylesheet" href="style.css?v=pro-polish-1" />
+    <link rel="stylesheet" href="style.css?v=stats-lab-5" />
   </head>
   <body>
     <div class="app-layout">
@@ -71,7 +71,7 @@
                 <path d="M15 8h5v5" />
               </svg>
             </span>
-            <span>Trends</span>
+            <span>Stats</span>
           </button>
           <button class="nav-item" type="button" data-view="history">
             <span class="nav-icon" aria-hidden="true">
@@ -129,20 +129,46 @@
         </section>
 
         <section class="view-panel" data-view-panel="trends" aria-labelledby="visualTitle" hidden>
-          <section class="visual-section" aria-labelledby="visualTitle">
+          <section class="visual-section stats-lab-section" aria-labelledby="visualTitle">
             <div class="section-heading">
               <div>
-                <p class="eyebrow">Form guide</p>
-                <h2 id="visualTitle">Performance trends</h2>
+                <p class="eyebrow">Stats lab</p>
+                <h2 id="visualTitle">Performance statistics</h2>
               </div>
-              <p class="hint">Rolling averages, lower is better</p>
+              <p class="hint">Filter by all-time, season, or month</p>
+            </div>
+            <div class="stats-period-shell" aria-label="Stats period">
+              <div class="stats-period-dock" id="statsPeriodDock"></div>
+            </div>
+            <div class="stats-overview-grid" id="statsSummary"></div>
+            <div class="stats-detail-grid">
+              <article class="stats-panel">
+                <div class="stats-panel-heading">
+                  <div>
+                    <p class="eyebrow">Comparison</p>
+                    <h3>Player breakdown</h3>
+                  </div>
+                  <span>Lower is better</span>
+                </div>
+                <div id="statsBreakdown"></div>
+              </article>
+              <article class="stats-panel">
+                <div class="stats-panel-heading">
+                  <div>
+                    <p class="eyebrow">Records</p>
+                    <h3>Period highlights</h3>
+                  </div>
+                  <span id="statsRecordsLabel">Selected period</span>
+                </div>
+                <div id="statsRecords"></div>
+              </article>
             </div>
             <div class="chart-grid">
               <article class="chart-card chart-card-wide">
                 <div class="chart-heading">
                   <div>
                     <h3>Rolling score average</h3>
-                    <p>10-round form with dashed long-term trend lines.</p>
+                    <p>10-round form in the selected period with dashed trend lines.</p>
                   </div>
                   <div class="chart-legend" id="trendLegend"></div>
                 </div>
@@ -152,7 +178,7 @@
                 <div class="chart-heading">
                   <div>
                     <h3>Winning margins</h3>
-                    <p>Last 16 completed rounds. Each bar is one round: left means Trym won, right means Nicolai won, length shows the margin.</p>
+                    <p>Last 16 rounds in the selected period. Left means Trym won, right means Nicolai won, length shows the margin.</p>
                   </div>
                 </div>
                 <div class="chart-frame compact-chart" id="marginChart"></div>
@@ -161,7 +187,7 @@
                 <div class="chart-heading">
                   <div>
                     <h3>Recent form</h3>
-                    <p>Last 10 compared with the previous 10 rounds.</p>
+                    <p>Last 10 compared with the previous 10 in the selected period.</p>
                   </div>
                 </div>
                 <div class="trend-insights" id="trendInsights"></div>
@@ -259,9 +285,6 @@
     </template>
 
     <script type="module">
-      import { initializeApp } from "https://www.gstatic.com/firebasejs/12.12.1/firebase-app.js";
-      import { getFirestore, collection, addDoc, getDocs, deleteDoc, doc, orderBy, query, runTransaction, serverTimestamp } from "https://www.gstatic.com/firebasejs/12.12.1/firebase-firestore.js";
-
       const firebaseConfig = {
         apiKey: "AIzaSyAuyjcvpGPd3BuQDfQkvgncvOFiFcwSj5U",
         authDomain: "goalless-tracker.firebaseapp.com",
@@ -271,11 +294,36 @@
         appId: "1:34223989172:web:a47d0a04f7848111d8d2e1"
       };
 
-      const app = initializeApp(firebaseConfig);
-      const db = getFirestore(app);
+      async function boot() {
+        try {
+          const [{ initializeApp }, firestore] = await Promise.all([
+            import("https://www.gstatic.com/firebasejs/12.12.1/firebase-app.js"),
+            import("https://www.gstatic.com/firebasejs/12.12.1/firebase-firestore.js")
+          ]);
+          const app = initializeApp(firebaseConfig);
+          const db = firestore.getFirestore(app);
 
-      window.goallessFirebase = { db, collection, addDoc, getDocs, deleteDoc, doc, orderBy, query, runTransaction, serverTimestamp };
-      import("./app.js?v=pro-polish-1");
+          window.goallessFirebase = {
+            db,
+            collection: firestore.collection,
+            addDoc: firestore.addDoc,
+            getDocs: firestore.getDocs,
+            deleteDoc: firestore.deleteDoc,
+            doc: firestore.doc,
+            orderBy: firestore.orderBy,
+            query: firestore.query,
+            runTransaction: firestore.runTransaction,
+            serverTimestamp: firestore.serverTimestamp
+          };
+        } catch (error) {
+          console.warn("Firebase did not initialize.", error);
+          window.goallessFirebase = null;
+        }
+
+        await import("./app.js?v=stats-lab-5");
+      }
+
+      boot();
     </script>
   </body>
 </html>

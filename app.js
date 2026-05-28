@@ -232,6 +232,7 @@ const state = {
   savingPlayer: null,
   importingPlayerIndex: null,
   categoryDate: null,
+  statsPeriod: "all",
 };
 
 const roundForm = document.querySelector("#roundForm");
@@ -246,6 +247,11 @@ const trendLegend = document.querySelector("#trendLegend");
 const trendChart = document.querySelector("#trendChart");
 const marginChart = document.querySelector("#marginChart");
 const trendInsights = document.querySelector("#trendInsights");
+const statsPeriodDock = document.querySelector("#statsPeriodDock");
+const statsSummary = document.querySelector("#statsSummary");
+const statsBreakdown = document.querySelector("#statsBreakdown");
+const statsRecords = document.querySelector("#statsRecords");
+const statsRecordsLabel = document.querySelector("#statsRecordsLabel");
 const historyList = document.querySelector("#historyList");
 const roundCount = document.querySelector("#roundCount");
 const saveMessage = document.querySelector("#saveMessage");
@@ -259,7 +265,7 @@ const viewPanels = [...document.querySelectorAll("[data-view-panel]")];
 const VIEW_TITLES = {
   dashboard: "Dashboard",
   "new-round": "New round",
-  trends: "Performance trends",
+  trends: "Stats",
   history: "Round history",
 };
 let seasonSlideshowTimer = null;
@@ -283,6 +289,7 @@ async function init() {
   });
   clearFormButton.addEventListener("click", resetRoundInputs);
   historyList.addEventListener("click", handleHistoryClick);
+  statsPeriodDock?.addEventListener("click", handleStatsPeriodClick);
 
   if (!firebase?.db) {
     state.loading = false;
@@ -329,6 +336,9 @@ function setActiveView(view) {
     button.classList.toggle("is-active", isActive);
     if (isActive) {
       button.setAttribute("aria-current", "page");
+      if (window.matchMedia("(max-width: 980px)").matches) {
+        button.scrollIntoView({ block: "nearest", inline: "center" });
+      }
     } else {
       button.removeAttribute("aria-current");
     }
@@ -2295,13 +2305,23 @@ async function handleHistoryClick(event) {
   }
 }
 
+function handleStatsPeriodClick(event) {
+  const button = event.target.closest("[data-stats-period]");
+  if (!button || button.dataset.statsPeriod === state.statsPeriod) {
+    return;
+  }
+
+  state.statsPeriod = button.dataset.statsPeriod;
+  renderVisualisations();
+}
+
 function render() {
   renderTodayRound();
   renderLeaderboard();
   renderHistoricalStats();
   renderVisualisations();
   renderHistory();
-  const trackedRounds = getHistoricalRoundCount() + state.rounds.length;
+  const trackedRounds = getTrackedRoundCount();
   roundCount.textContent = `${trackedRounds} tracked ${trackedRounds === 1 ? "round" : "rounds"}`;
   if (sidebarRoundCount) {
     sidebarRoundCount.textContent = String(trackedRounds);
@@ -2788,13 +2808,26 @@ function setupSeasonSlideshow() {
 }
 
 function renderVisualisations() {
-  const rounds = getVisualRounds();
+  const allRounds = getVisualRounds();
+  const periods = getStatsPeriods(allRounds);
+
+  if (!periods.some((period) => period.id === state.statsPeriod)) {
+    state.statsPeriod = "all";
+  }
+
+  const selectedPeriod = periods.find((period) => period.id === state.statsPeriod) || periods[0];
+  const rounds = getRoundsForStatsPeriod(allRounds, state.statsPeriod);
+
+  renderStatsPeriodDock(periods);
+  renderStatsSummary(rounds, selectedPeriod);
+  renderStatsBreakdown(rounds);
+  renderStatsRecords(rounds, selectedPeriod);
 
   if (rounds.length < 2) {
     trendLegend.innerHTML = "";
-    trendChart.innerHTML = '<div class="empty-state">Add more rounds to draw trends.</div>';
-    marginChart.innerHTML = '<div class="empty-state">Add more rounds to draw winning margins.</div>';
-    trendInsights.innerHTML = '<div class="empty-state">Recent form appears after 20 rounds.</div>';
+    trendChart.innerHTML = '<div class="empty-state">Select a period with at least two rounds to draw trends.</div>';
+    marginChart.innerHTML = '<div class="empty-state">Select a period with at least two rounds to draw winning margins.</div>';
+    trendInsights.innerHTML = '<div class="empty-state">Recent form needs at least two rounds in this period.</div>';
     return;
   }
 
@@ -2812,6 +2845,353 @@ function renderVisualisations() {
   trendChart.innerHTML = renderRollingAverageChart(rounds);
   marginChart.innerHTML = renderWinningMarginChart(rounds);
   trendInsights.innerHTML = renderTrendInsights(rounds);
+}
+
+function getStatsPeriods(rounds) {
+  const years = new Map();
+  const months = new Map();
+
+  rounds.forEach((round) => {
+    if (Number.isFinite(round.year)) {
+      years.set(round.year, (years.get(round.year) || 0) + 1);
+    }
+
+    if (round.date) {
+      const monthKey = round.date.slice(0, 7);
+      months.set(monthKey, (months.get(monthKey) || 0) + 1);
+    }
+  });
+
+  const yearPeriods = [...years.entries()]
+    .sort((a, b) => b[0] - a[0])
+    .map(([year, count]) => ({
+      id: `year-${year}`,
+      type: "year",
+      label: String(year),
+      detail: getPeriodRoundLabel(count),
+    }));
+
+  const monthPeriods = [...months.entries()]
+    .sort((a, b) => b[0].localeCompare(a[0]))
+    .map(([monthKey, count]) => ({
+      id: `month-${monthKey}`,
+      type: "month",
+      label: formatMonthLabel(monthKey),
+      detail: getPeriodRoundLabel(count),
+    }));
+
+  return [
+    {
+      id: "all",
+      type: "all",
+      label: "All",
+      detail: getPeriodRoundLabel(rounds.length),
+    },
+    ...yearPeriods,
+    ...monthPeriods,
+  ];
+}
+
+function getRoundsForStatsPeriod(rounds, periodId) {
+  if (periodId === "all") {
+    return rounds;
+  }
+
+  if (periodId.startsWith("year-")) {
+    const year = Number(periodId.replace("year-", ""));
+    return rounds.filter((round) => round.year === year);
+  }
+
+  if (periodId.startsWith("month-")) {
+    const monthKey = periodId.replace("month-", "");
+    return rounds.filter((round) => round.date?.startsWith(`${monthKey}-`));
+  }
+
+  return rounds;
+}
+
+function renderStatsPeriodDock(periods) {
+  if (!statsPeriodDock) {
+    return;
+  }
+
+  statsPeriodDock.innerHTML = periods
+    .map(
+      (period) => `
+        <button
+          class="stats-period-button ${period.id === state.statsPeriod ? "is-active" : ""}"
+          type="button"
+          data-stats-period="${escapeHtml(period.id)}"
+          data-period-type="${escapeHtml(period.type)}"
+          aria-pressed="${period.id === state.statsPeriod}"
+        >
+          <span>${escapeHtml(period.label)}</span>
+          <small>${escapeHtml(period.detail)}</small>
+        </button>
+      `,
+    )
+    .join("");
+}
+
+function renderStatsSummary(rounds, period) {
+  if (!statsSummary) {
+    return;
+  }
+
+  if (!rounds.length) {
+    statsSummary.innerHTML = '<div class="empty-state">No rounds in this period yet.</div>';
+    return;
+  }
+
+  const snapshot = buildStatsSnapshot(rounds);
+  const leader = snapshot.players[0];
+  const second = snapshot.players[1];
+  const averageLeader = [...snapshot.players].sort((a, b) => a.average - b.average)[0];
+  const gap = leader && second ? second.total - leader.total : 0;
+  const leaderDetail = gap > 0 ? `${formatNumber(gap)} points ahead` : "Level on total";
+
+  statsSummary.innerHTML = `
+    <article class="stats-summary-card">
+      <span>Period</span>
+      <strong>${formatNumber(rounds.length)}</strong>
+      <small>${escapeHtml(period?.label || "Selected")} - ${escapeHtml(getRoundRangeLabel(rounds))}</small>
+    </article>
+    <article class="stats-summary-card is-leader">
+      <span>Leader</span>
+      <strong>${escapeHtml(leader?.name || "-")}</strong>
+      <small>${escapeHtml(leaderDetail)}</small>
+    </article>
+    <article class="stats-summary-card">
+      <span>Best average</span>
+      <strong>${escapeHtml(averageLeader?.name || "-")}</strong>
+      <small>${averageLeader ? formatAverage(averageLeader.average) : "-"} points per round</small>
+    </article>
+    <article class="stats-summary-card">
+      <span>Avg margin</span>
+      <strong>${formatAverage(snapshot.averageMargin)}</strong>
+      <small>${snapshot.draws} draw${snapshot.draws === 1 ? "" : "s"} in period</small>
+    </article>
+  `;
+}
+
+function renderStatsBreakdown(rounds) {
+  if (!statsBreakdown) {
+    return;
+  }
+
+  if (!rounds.length) {
+    statsBreakdown.innerHTML = '<div class="empty-state">No player stats in this period.</div>';
+    return;
+  }
+
+  const snapshot = buildStatsSnapshot(rounds);
+
+  statsBreakdown.innerHTML = `
+    <div class="stats-player-table" role="table" aria-label="Player statistics">
+      <div class="stats-player-table-head" role="row">
+        <span>Rank</span>
+        <span>Player</span>
+        <span>Total</span>
+        <span>Average</span>
+        <span>Wins</span>
+        <span>Win rate</span>
+        <span>Best</span>
+        <span>Median</span>
+        <span>Streak</span>
+      </div>
+      ${snapshot.players
+        .map(
+          (player, index) => `
+            <article class="stats-player-row ${index === 0 ? "is-leader" : ""}" role="row">
+              <div class="stats-rank" role="cell">
+                <span>#</span>
+                <strong>${index + 1}</strong>
+              </div>
+              <div class="stats-player-main" role="cell">
+                <span class="player-dot is-${player.name.toLowerCase()}"></span>
+                <div>
+                  <strong>${escapeHtml(player.name)}</strong>
+                  <small>${index === 0 ? "First in period" : `${formatNumber(player.total - snapshot.players[0].total)} behind`}</small>
+                </div>
+              </div>
+              ${renderStatsCell("Total", formatNumber(player.total))}
+              ${renderStatsCell("Average", formatAverage(player.average))}
+              ${renderStatsCell("Wins", formatNumber(player.wins))}
+              ${renderStatsCell("Win rate", formatPercent(player.wins / Math.max(1, rounds.length)))}
+              ${renderStatsCell("Best", formatNullableNumber(player.best))}
+              ${renderStatsCell("Median", formatAverage(player.median))}
+              ${renderStatsCell("Streak", `${player.currentStreak} now`, `${player.longestStreak} best`)}
+            </article>
+          `,
+        )
+        .join("")}
+    </div>
+  `;
+}
+
+function renderStatsCell(label, value, detail = "") {
+  return `
+    <div class="stats-cell" role="cell">
+      <span>${escapeHtml(label)}</span>
+      <strong>${escapeHtml(value)}</strong>
+      ${detail ? `<small>${escapeHtml(detail)}</small>` : ""}
+    </div>
+  `;
+}
+
+function renderStatsRecords(rounds, period) {
+  if (!statsRecords) {
+    return;
+  }
+
+  if (statsRecordsLabel) {
+    statsRecordsLabel.textContent = period?.label || "Selected period";
+  }
+
+  if (!rounds.length) {
+    statsRecords.innerHTML = '<div class="empty-state">No records in this period yet.</div>';
+    return;
+  }
+
+  const snapshot = buildStatsSnapshot(rounds);
+  const records = [
+    {
+      label: "Best single round",
+      value: snapshot.bestScore
+        ? `${snapshot.bestScore.name} ${formatNumber(snapshot.bestScore.score)}`
+        : "-",
+      detail: snapshot.bestScore?.round.label || "",
+    },
+    {
+      label: "Worst single round",
+      value: snapshot.worstScore
+        ? `${snapshot.worstScore.name} ${formatNumber(snapshot.worstScore.score)}`
+        : "-",
+      detail: snapshot.worstScore?.round.label || "",
+    },
+    {
+      label: "Biggest win",
+      value: snapshot.biggestMargin
+        ? getMarginRecordValue(snapshot.biggestMargin)
+        : "-",
+      detail: snapshot.biggestMargin ? getRoundScoreLabel(snapshot.biggestMargin.round) : "",
+    },
+    {
+      label: "Closest win",
+      value: snapshot.closestMargin
+        ? getMarginRecordValue(snapshot.closestMargin)
+        : "No decided rounds",
+      detail: snapshot.closestMargin ? getRoundScoreLabel(snapshot.closestMargin.round) : "",
+    },
+  ];
+
+  statsRecords.innerHTML = `
+    <div class="stats-record-list">
+      ${records
+        .map(
+          (record) => `
+            <article class="stats-record">
+              <span>${escapeHtml(record.label)}</span>
+              <strong>${escapeHtml(record.value)}</strong>
+              <small>${escapeHtml(record.detail)}</small>
+            </article>
+          `,
+        )
+        .join("")}
+    </div>
+  `;
+}
+
+function buildStatsSnapshot(rounds) {
+  const players = Object.keys(getPlayerColors());
+  const streaks = getStreakStatsByPlayer(rounds);
+  const scoreEntries = rounds.flatMap((round) =>
+    players
+      .map((name) => ({
+        name,
+        round,
+        score: round.scores[name],
+      }))
+      .filter((entry) => Number.isFinite(entry.score)),
+  );
+  const margins = rounds
+    .map((round) => ({
+      round,
+      winner: getWinnerFromScores(round.scores),
+      margin: Math.abs(round.scores.Trym - round.scores.Nicolai),
+    }))
+    .filter((item) => Number.isFinite(item.margin));
+  const playerStats = players
+    .map((name) => {
+      const scores = rounds.map((round) => round.scores[name]).filter((score) => Number.isFinite(score));
+      const best = scores.length ? Math.min(...scores) : null;
+      const worst = scores.length ? Math.max(...scores) : null;
+
+      return {
+        name,
+        total: scores.reduce((total, score) => total + score, 0),
+        rounds: scores.length,
+        average: average(scores),
+        median: median(scores),
+        best,
+        worst,
+        wins: rounds.filter((round) => getWinnerFromScores(round.scores) === name).length,
+        currentStreak: streaks[name]?.current || 0,
+        longestStreak: streaks[name]?.longest || 0,
+      };
+    })
+    .sort((a, b) => a.total - b.total || a.average - b.average || b.wins - a.wins);
+
+  return {
+    players: playerStats,
+    draws: rounds.filter((round) => getWinnerFromScores(round.scores) === null).length,
+    averageMargin: average(margins.map((item) => item.margin)),
+    bestScore: [...scoreEntries].sort((a, b) => a.score - b.score)[0] || null,
+    worstScore: [...scoreEntries].sort((a, b) => b.score - a.score)[0] || null,
+    biggestMargin: [...margins].sort((a, b) => b.margin - a.margin)[0] || null,
+    closestMargin:
+      [...margins].filter((item) => item.margin > 0).sort((a, b) => a.margin - b.margin)[0] || null,
+  };
+}
+
+function getPeriodRoundLabel(count) {
+  return `${formatNumber(count)} round${count === 1 ? "" : "s"}`;
+}
+
+function formatMonthLabel(monthKey) {
+  const [year, month] = monthKey.split("-").map(Number);
+  return new Intl.DateTimeFormat(undefined, {
+    month: "short",
+    year: "numeric",
+  }).format(new Date(year, month - 1, 1));
+}
+
+function getRoundRangeLabel(rounds) {
+  const datedRounds = rounds.filter((round) => round.date).sort((a, b) => String(a.date).localeCompare(String(b.date)));
+  const importedWithoutDate = rounds.length - datedRounds.length;
+
+  if (!datedRounds.length) {
+    return "Imported history";
+  }
+
+  if (datedRounds.length === 1) {
+    return formatDate(datedRounds[0].date);
+  }
+
+  const range = `${formatDate(datedRounds[0].date)} to ${formatDate(datedRounds[datedRounds.length - 1].date)}`;
+  return importedWithoutDate ? `${range} + ${formatNumber(importedWithoutDate)} imported` : range;
+}
+
+function formatNullableNumber(value) {
+  return Number.isFinite(value) ? formatNumber(value) : "-";
+}
+
+function getRoundScoreLabel(round) {
+  return `Trym ${formatNumber(round.scores.Trym)}, Nicolai ${formatNumber(round.scores.Nicolai)}`;
+}
+
+function getMarginRecordValue(record) {
+  return record.winner ? `${record.winner} by ${formatNumber(record.margin)}` : "Draw";
 }
 
 function getVisualRounds() {
@@ -3438,6 +3818,11 @@ function getHistoricalPlayerNames() {
 
 function getHistoricalRoundCount() {
   return HISTORICAL_SEASONS.reduce((total, season) => total + season.rounds, 0);
+}
+
+function getTrackedRoundCount() {
+  const incompleteFirestoreRounds = state.rounds.filter((round) => !isRoundComplete(round)).length;
+  return getVisualRounds().length + incompleteFirestoreRounds;
 }
 
 function getHistoricalPlayerStats() {
