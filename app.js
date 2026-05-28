@@ -14,6 +14,10 @@ const SCORE_SCREENSHOT_SCALE = 4;
 const SCORE_SCREENSHOT_TEXT_PADDING = 18;
 const SCORE_SCREENSHOT_ANSWER_COLUMN_RATIO = 0.82;
 const SCORE_SCREENSHOT_SCORE_COLUMN_RATIO = 0.76;
+const SCORE_SCREENSHOT_MAX_BYTES = 8 * 1024 * 1024;
+const SCORE_SCREENSHOT_MAX_DIMENSION = 2400;
+const SCORE_SCREENSHOT_MAX_PIXELS = 4_000_000;
+const SCORE_SCREENSHOT_HARD_MAX_PIXELS = 24_000_000;
 let tesseractLoadPromise = null;
 const HISTORICAL_SEASONS = [
   {
@@ -247,10 +251,21 @@ const saveMessage = document.querySelector("#saveMessage");
 const appStatus = document.querySelector("#appStatus");
 const clearFormButton = document.querySelector("#clearFormButton");
 const playerTemplate = document.querySelector("#playerFormTemplate");
+const pageTitle = document.querySelector("#pageTitle");
+const sidebarRoundCount = document.querySelector("#sidebarRoundCount");
+const navButtons = [...document.querySelectorAll("[data-view]")];
+const viewPanels = [...document.querySelectorAll("[data-view-panel]")];
+const VIEW_TITLES = {
+  dashboard: "Dashboard",
+  "new-round": "New round",
+  trends: "Performance trends",
+  history: "Round history",
+};
 
 init();
 
 async function init() {
+  initNavigation();
   roundDate.value = state.draft?.date || getToday();
   roundCategory.value = getDraftCategoryForDate(roundDate.value);
   state.categoryDate = roundDate.value;
@@ -275,6 +290,57 @@ async function init() {
   }
 
   await loadRounds();
+}
+
+function initNavigation() {
+  navButtons.forEach((button) => {
+    button.addEventListener("click", () => {
+      const view = button.dataset.view;
+      if (!VIEW_TITLES[view]) {
+        return;
+      }
+
+      window.history.pushState(null, "", `#${view}`);
+      setActiveView(view);
+    });
+  });
+
+  window.addEventListener("popstate", () => {
+    setActiveView(getViewFromHash());
+  });
+  window.addEventListener("hashchange", () => {
+    setActiveView(getViewFromHash());
+  });
+  setActiveView(getViewFromHash());
+}
+
+function getViewFromHash() {
+  const view = window.location.hash.replace("#", "");
+  return VIEW_TITLES[view] ? view : "dashboard";
+}
+
+function setActiveView(view) {
+  const activeView = VIEW_TITLES[view] ? view : "dashboard";
+
+  navButtons.forEach((button) => {
+    const isActive = button.dataset.view === activeView;
+    button.classList.toggle("is-active", isActive);
+    if (isActive) {
+      button.setAttribute("aria-current", "page");
+    } else {
+      button.removeAttribute("aria-current");
+    }
+  });
+
+  viewPanels.forEach((panel) => {
+    const isActive = panel.dataset.viewPanel === activeView;
+    panel.classList.toggle("is-active", isActive);
+    panel.hidden = !isActive;
+  });
+
+  if (pageTitle) {
+    pageTitle.textContent = VIEW_TITLES[activeView];
+  }
 }
 
 function loadPlayers() {
@@ -495,12 +561,14 @@ function renderPlayerForms() {
 function createAnswerRow(answerIndex, savedAnswer = null) {
   const row = document.createElement("div");
   row.className = "answer-row";
+  row.dataset.answerNumber = String(answerIndex + 1);
 
   const answerInput = document.createElement("input");
   answerInput.type = "text";
   answerInput.placeholder = `Answer ${answerIndex + 1}`;
   answerInput.autocomplete = "off";
   answerInput.className = "answer-input";
+  answerInput.setAttribute("aria-label", `Answer ${answerIndex + 1}`);
   answerInput.value = savedAnswer?.answer || "";
 
   const statusButton = document.createElement("button");
@@ -520,6 +588,7 @@ function createAnswerRow(answerIndex, savedAnswer = null) {
   pointsInput.step = "1";
   pointsInput.inputMode = "numeric";
   pointsInput.className = "points-input";
+  pointsInput.setAttribute("aria-label", `Points for answer ${answerIndex + 1}`);
   pointsInput.value = savedAnswer?.points || "";
 
   row.append(answerInput, statusButton, pointsInput);
@@ -543,6 +612,12 @@ function wireScreenshotImport({
   }
 
   screenshotButton.addEventListener("click", () => {
+    if (!isScreenshotImportDisabled(card)) {
+      screenshotInput.click();
+    }
+  });
+
+  screenshotDropzone.addEventListener("click", () => {
     if (!isScreenshotImportDisabled(card)) {
       screenshotInput.click();
     }
@@ -616,6 +691,14 @@ async function handleScreenshotFile(file, playerIndex, card) {
   const screenshotInput = card.querySelector(".screenshot-input");
   if (!file.type.startsWith("image/")) {
     setScreenshotStatus(card, "Choose an image file.", true);
+    if (screenshotInput) {
+      screenshotInput.value = "";
+    }
+    return;
+  }
+
+  if (file.size > SCORE_SCREENSHOT_MAX_BYTES) {
+    setScreenshotStatus(card, "Screenshot is too large. Crop it or choose an image under 8 MB.", true);
     if (screenshotInput) {
       screenshotInput.value = "";
     }
@@ -824,9 +907,10 @@ async function createImageCanvas(file) {
   if (typeof createImageBitmap === "function") {
     const bitmap = await createImageBitmap(file);
     const canvas = document.createElement("canvas");
-    canvas.width = bitmap.width;
-    canvas.height = bitmap.height;
-    canvas.getContext("2d").drawImage(bitmap, 0, 0);
+    const size = getConstrainedScreenshotSize(bitmap.width, bitmap.height);
+    canvas.width = size.width;
+    canvas.height = size.height;
+    canvas.getContext("2d").drawImage(bitmap, 0, 0, size.width, size.height);
 
     if (typeof bitmap.close === "function") {
       bitmap.close();
@@ -842,9 +926,13 @@ async function createImageCanvas(file) {
     image.onload = () => {
       URL.revokeObjectURL(url);
       const canvas = document.createElement("canvas");
-      canvas.width = image.naturalWidth || image.width;
-      canvas.height = image.naturalHeight || image.height;
-      canvas.getContext("2d").drawImage(image, 0, 0);
+      const size = getConstrainedScreenshotSize(
+        image.naturalWidth || image.width,
+        image.naturalHeight || image.height,
+      );
+      canvas.width = size.width;
+      canvas.height = size.height;
+      canvas.getContext("2d").drawImage(image, 0, 0, size.width, size.height);
       resolve(canvas);
     };
     image.onerror = () => {
@@ -853,6 +941,31 @@ async function createImageCanvas(file) {
     };
     image.src = url;
   });
+}
+
+function getConstrainedScreenshotSize(sourceWidth, sourceHeight) {
+  const width = Number(sourceWidth);
+  const height = Number(sourceHeight);
+
+  if (!Number.isFinite(width) || !Number.isFinite(height) || width <= 0 || height <= 0) {
+    throw new Error("image-load-failed");
+  }
+
+  if (width * height > SCORE_SCREENSHOT_HARD_MAX_PIXELS) {
+    throw new Error("image-too-large");
+  }
+
+  const scale = Math.min(
+    1,
+    SCORE_SCREENSHOT_MAX_DIMENSION / width,
+    SCORE_SCREENSHOT_MAX_DIMENSION / height,
+    Math.sqrt(SCORE_SCREENSHOT_MAX_PIXELS / (width * height)),
+  );
+
+  return {
+    width: Math.max(1, Math.round(width * scale)),
+    height: Math.max(1, Math.round(height * scale)),
+  };
 }
 
 function detectScoreScreenshotLayout(canvas) {
@@ -1327,6 +1440,14 @@ function getOcrStatusLabel(message) {
 function getScreenshotErrorMessage(error) {
   if (error?.message === "ocr-load-failed" || error?.message === "ocr-unavailable") {
     return "Screenshot OCR could not load.";
+  }
+
+  if (error?.message === "image-too-large") {
+    return "Screenshot dimensions are too large. Crop the image and try again.";
+  }
+
+  if (error?.message === "image-load-failed") {
+    return "Could not load that screenshot.";
   }
 
   return "Could not read screenshot.";
@@ -2179,6 +2300,9 @@ function render() {
   renderHistory();
   const trackedRounds = getHistoricalRoundCount() + state.rounds.length;
   roundCount.textContent = `${trackedRounds} tracked ${trackedRounds === 1 ? "round" : "rounds"}`;
+  if (sidebarRoundCount) {
+    sidebarRoundCount.textContent = String(trackedRounds);
+  }
   updateDateAvailability();
 }
 
@@ -2640,14 +2764,24 @@ function renderWinningMarginChart(rounds) {
       `;
     })
     .join("");
+  const latestRound = recentRounds[recentRounds.length - 1];
+  const latestWinner = latestRound ? getWinnerFromScores(latestRound.scores) : null;
+  const latestDescription = latestRound
+    ? latestWinner
+      ? `${latestRound.label}: ${latestWinner} won by ${Math.abs(latestRound.scores.Trym - latestRound.scores.Nicolai)}.`
+      : `${latestRound.label}: draw.`
+    : "";
+  const description = `Last ${recentRounds.length} completed rounds. Trym has ${wins.Trym} wins, Nicolai has ${wins.Nicolai} wins, and there ${draws === 1 ? "is" : "are"} ${draws} draw${draws === 1 ? "" : "s"}. ${latestDescription}`;
 
   return `
-    <svg class="margin-svg" viewBox="0 0 ${width} ${height}" role="img" aria-label="Recent winning margins">
+    <svg class="margin-svg" viewBox="0 0 ${width} ${height}" role="img" aria-labelledby="marginChartTitle marginChartDesc">
+      <title id="marginChartTitle">Recent winning margins</title>
+      <desc id="marginChartDesc">${escapeHtml(description)}</desc>
       <rect class="chart-plot-bg" x="${padding.left}" y="${padding.top}" width="${plotWidth}" height="${plotHeight}" rx="6"></rect>
       <rect class="margin-side-fill is-trym" x="${padding.left}" y="${padding.top}" width="${centerX - padding.left}" height="${plotHeight}"></rect>
       <rect class="margin-side-fill is-nicolai" x="${centerX}" y="${padding.top}" width="${width - padding.right - centerX}" height="${plotHeight}"></rect>
-      <text class="margin-player-label is-trym" x="${padding.left}" y="24" text-anchor="start" fill="#ffe08a">Trym: ${wins.Trym} wins</text>
-      <text class="margin-player-label is-nicolai" x="${width - padding.right}" y="24" text-anchor="end" fill="#b6efff">Nicolai: ${wins.Nicolai} wins</text>
+      <text class="margin-player-label is-trym" x="${padding.left}" y="24" text-anchor="start">Trym: ${wins.Trym} wins</text>
+      <text class="margin-player-label is-nicolai" x="${width - padding.right}" y="24" text-anchor="end">Nicolai: ${wins.Nicolai} wins</text>
       ${draws ? `<text class="margin-draw-label" x="${centerX}" y="24" text-anchor="middle">${draws} draw${draws === 1 ? "" : "s"}</text>` : ""}
       ${tickLabels}
       <line class="margin-center-line" x1="${centerX}" x2="${centerX}" y1="${padding.top - 6}" y2="${height - padding.bottom + 6}"></line>
@@ -2722,9 +2856,19 @@ function renderLineChart({
       `,
     )
     .join("");
+  const chartId = getSvgId(className || "line-chart");
+  const seriesSummary = series
+    .map((item) => {
+      const latestPoint = item.points[item.points.length - 1];
+      return latestPoint ? `${item.name} latest ${formatAverage(latestPoint.value)}` : item.name;
+    })
+    .join("; ");
+  const description = `${yLabel} trend chart across ${xRange + 1} rounds. ${seriesSummary}. Lower scores are better.`;
 
   return `
-    <svg class="${className}" viewBox="0 0 ${width} ${height}" role="img" aria-label="${escapeHtml(yLabel)} trend chart">
+    <svg class="${className}" viewBox="0 0 ${width} ${height}" role="img" aria-labelledby="${chartId}Title ${chartId}Desc">
+      <title id="${chartId}Title">${escapeHtml(yLabel)} trend chart</title>
+      <desc id="${chartId}Desc">${escapeHtml(description)}</desc>
       <rect class="chart-plot-bg" x="${padding.left}" y="${padding.top}" width="${plotWidth}" height="${plotHeight}" rx="6"></rect>
       ${gridLines}
       ${zero}
@@ -2734,6 +2878,12 @@ function renderLineChart({
       <text class="chart-axis-title" x="14" y="${padding.top + 10}" transform="rotate(-90 14 ${padding.top + 10})">${escapeHtml(yLabel)}</text>
     </svg>
   `;
+}
+
+function getSvgId(value) {
+  return String(value || "chart")
+    .replace(/[^a-z0-9]+/gi, "-")
+    .replace(/^-|-$/g, "") || "chart";
 }
 
 function renderTrendInsights(rounds) {
@@ -2843,8 +2993,8 @@ function getChartXLabels(rounds) {
 
 function getPlayerColors() {
   return {
-    Trym: "#f0c040",
-    Nicolai: "#64d2ff",
+    Trym: "var(--player-trym)",
+    Nicolai: "var(--player-nicolai)",
   };
 }
 
@@ -3204,6 +3354,8 @@ function isAnswerWrong(row) {
 function setAnswerWrongState(row, isWrong, options = {}) {
   const statusButton = row.querySelector(".answer-status-toggle");
   const pointsInput = row.querySelector(".points-input");
+  const answerNumber = row.dataset.answerNumber || "";
+  const answerLabel = answerNumber ? `answer ${answerNumber}` : "this answer";
 
   row.dataset.wrong = String(isWrong);
   row.classList.toggle("is-wrong", isWrong);
@@ -3211,6 +3363,10 @@ function setAnswerWrongState(row, isWrong, options = {}) {
     clearPerfectAnswerState(row);
   }
   statusButton.setAttribute("aria-pressed", String(isWrong));
+  statusButton.setAttribute(
+    "aria-label",
+    isWrong ? `Mark ${answerLabel} as correct` : `Mark ${answerLabel} as wrong`,
+  );
   statusButton.textContent = isWrong ? "Wrong" : "Correct";
   statusButton.title = isWrong
     ? "Marked wrong. This answer is automatically worth 100 points."

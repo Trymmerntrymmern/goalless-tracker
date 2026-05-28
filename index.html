@@ -10,118 +10,184 @@
       href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700;800;900&display=swap"
       rel="stylesheet"
     />
-    <link rel="stylesheet" href="style.css?v=screenshot-import-4" />
+    <link rel="stylesheet" href="style.css?v=logo-1" />
   </head>
   <body>
-    <main class="app-shell">
-      <header class="app-header">
-        <div>
-          <p class="eyebrow">Daily football trivia</p>
-          <h1><span aria-hidden="true">&#9917;</span> Goalless Tracker</h1>
-        </div>
-        <div class="season-chip" id="roundCount">0 rounds</div>
-      </header>
-
-      <section class="scoreboard" aria-labelledby="leaderboardTitle">
-        <div class="section-heading">
-          <div>
-            <p class="eyebrow">Season table</p>
-            <h2 id="leaderboardTitle">Overall leaderboard</h2>
+    <div class="app-layout">
+      <aside class="app-sidebar" aria-label="Primary navigation">
+        <div class="sidebar-brand" aria-label="Goalless">
+          <svg class="brand-logo-mark" viewBox="0 0 120 118" aria-hidden="true" focusable="false">
+            <defs>
+              <linearGradient id="cupShine" x1="28" y1="16" x2="92" y2="104" gradientUnits="userSpaceOnUse">
+                <stop offset="0" stop-color="#ffffff" />
+                <stop offset="0.48" stop-color="#d8dde5" />
+                <stop offset="1" stop-color="#6d747e" />
+              </linearGradient>
+              <radialGradient id="greenGlow" cx="50%" cy="78%" r="55%">
+                <stop offset="0" stop-color="#a8ff2d" stop-opacity="0.8" />
+                <stop offset="1" stop-color="#a8ff2d" stop-opacity="0" />
+              </radialGradient>
+            </defs>
+            <ellipse class="brand-glow" cx="60" cy="94" rx="42" ry="18" fill="url(#greenGlow)" />
+            <path class="brand-handle" d="M34 46 C14 44 13 73 32 77" />
+            <path class="brand-handle" d="M86 46 C106 44 107 73 88 77" />
+            <path class="brand-cup" d="M36 42 L84 42 C82 61 76 76 67 88 L73 100 L47 100 L53 88 C44 76 38 61 36 42 Z" />
+            <path class="brand-cup-cut" d="M60 45 L80 45 C77 62 72 75 64 86 L60 92 Z" />
+            <path class="brand-base" d="M43 100 H77 L84 110 H36 Z" />
+            <circle class="brand-ball" cx="60" cy="34" r="25" />
+            <path class="brand-panel" d="M60 21 L70 28 L66 40 H54 L50 28 Z" />
+            <path class="brand-stitch" d="M50 28 L39 30 M70 28 L81 30 M54 40 L47 50 M66 40 L73 50" />
+          </svg>
+          <div class="brand-wordmark" aria-hidden="true">
+            <span class="brand-word-goal">Goal</span><span class="brand-word-less">less</span>
           </div>
-          <p class="hint">Lower score wins</p>
+          <p class="brand-subtitle">Daily competition</p>
         </div>
-        <div class="leaderboard-grid" id="leaderboard"></div>
-        <div class="historical-summary" id="historicalSummary"></div>
-        <div class="season-stats" id="seasonStats"></div>
-      </section>
 
-      <section class="visual-section" aria-labelledby="visualTitle">
-        <div class="section-heading">
-          <div>
-            <p class="eyebrow">Form guide</p>
-            <h2 id="visualTitle">Performance trends</h2>
-          </div>
-          <p class="hint">Rolling averages, lower is better</p>
+        <nav class="sidebar-nav" aria-label="Goalless Tracker sections">
+          <button class="nav-item is-active" type="button" data-view="dashboard" aria-current="page">
+            <span class="nav-icon" aria-hidden="true">&#8962;</span>
+            <span>Dashboard</span>
+          </button>
+          <button class="nav-item" type="button" data-view="new-round">
+            <span class="nav-icon" aria-hidden="true">+</span>
+            <span>New round</span>
+          </button>
+          <button class="nav-item" type="button" data-view="trends">
+            <span class="nav-icon" aria-hidden="true">&#8599;</span>
+            <span>Trends</span>
+          </button>
+          <button class="nav-item" type="button" data-view="history">
+            <span class="nav-icon" aria-hidden="true">&#9638;</span>
+            <span>History</span>
+          </button>
+        </nav>
+
+        <div class="sidebar-card">
+          <p class="eyebrow">Tracked rounds</p>
+          <strong id="sidebarRoundCount">0</strong>
+          <span>Imported history and saved rounds</span>
         </div>
-        <div class="chart-grid">
-          <article class="chart-card chart-card-wide">
-            <div class="chart-heading">
+      </aside>
+
+      <main class="app-shell">
+        <header class="app-header">
+          <div>
+            <p class="eyebrow">Daily football trivia</p>
+            <h1 id="pageTitle">Dashboard</h1>
+          </div>
+          <div class="season-chip" id="roundCount">0 rounds</div>
+        </header>
+
+        <section class="view-panel is-active" data-view-panel="dashboard" aria-labelledby="pageTitle">
+          <section class="scoreboard" aria-labelledby="leaderboardTitle">
+            <div class="section-heading">
               <div>
-                <h3>Rolling score average</h3>
-                <p>10-round form with dashed long-term trend lines.</p>
+                <p class="eyebrow">Season table</p>
+                <h2 id="leaderboardTitle">Overall leaderboard</h2>
               </div>
-              <div class="chart-legend" id="trendLegend"></div>
+              <p class="hint">Lower score wins</p>
             </div>
-            <div class="chart-frame" id="trendChart"></div>
-          </article>
-          <article class="chart-card">
-            <div class="chart-heading">
+            <div class="leaderboard-grid" id="leaderboard"></div>
+            <div class="historical-summary" id="historicalSummary"></div>
+            <div class="season-stats" id="seasonStats"></div>
+          </section>
+        </section>
+
+        <section class="view-panel" data-view-panel="trends" aria-labelledby="visualTitle" hidden>
+          <section class="visual-section" aria-labelledby="visualTitle">
+            <div class="section-heading">
               <div>
-                <h3>Winning margins</h3>
-                <p>Last 16 completed rounds. Each bar is one round: left means Trym won, right means Nicolai won, length shows the margin.</p>
+                <p class="eyebrow">Form guide</p>
+                <h2 id="visualTitle">Performance trends</h2>
               </div>
+              <p class="hint">Rolling averages, lower is better</p>
             </div>
-            <div class="chart-frame compact-chart" id="marginChart"></div>
-          </article>
-          <article class="chart-card">
-            <div class="chart-heading">
+            <div class="chart-grid">
+              <article class="chart-card chart-card-wide">
+                <div class="chart-heading">
+                  <div>
+                    <h3>Rolling score average</h3>
+                    <p>10-round form with dashed long-term trend lines.</p>
+                  </div>
+                  <div class="chart-legend" id="trendLegend"></div>
+                </div>
+                <div class="chart-frame" id="trendChart"></div>
+              </article>
+              <article class="chart-card">
+                <div class="chart-heading">
+                  <div>
+                    <h3>Winning margins</h3>
+                    <p>Last 16 completed rounds. Each bar is one round: left means Trym won, right means Nicolai won, length shows the margin.</p>
+                  </div>
+                </div>
+                <div class="chart-frame compact-chart" id="marginChart"></div>
+              </article>
+              <article class="chart-card">
+                <div class="chart-heading">
+                  <div>
+                    <h3>Recent form</h3>
+                    <p>Last 10 compared with the previous 10 rounds.</p>
+                  </div>
+                </div>
+                <div class="trend-insights" id="trendInsights"></div>
+              </article>
+            </div>
+          </section>
+        </section>
+
+        <section class="view-panel" data-view-panel="new-round" aria-labelledby="roundFormTitle" hidden>
+          <section class="entry-card" aria-labelledby="roundFormTitle">
+            <div class="section-heading">
               <div>
-                <h3>Recent form</h3>
-                <p>Last 10 compared with the previous 10 rounds.</p>
+                <p class="eyebrow">Add today's round</p>
+                <h2 id="roundFormTitle">New round</h2>
               </div>
+              <button class="ghost-button" type="button" id="clearFormButton">Clear</button>
             </div>
-            <div class="trend-insights" id="trendInsights"></div>
-          </article>
-        </div>
-      </section>
 
-      <section class="entry-card" aria-labelledby="roundFormTitle">
-        <div class="section-heading">
-          <div>
-            <p class="eyebrow">Add today's round</p>
-            <h2 id="roundFormTitle">New round</h2>
-          </div>
-          <button class="ghost-button" type="button" id="clearFormButton">Clear</button>
-        </div>
+            <form id="roundForm" class="round-form">
+              <div class="round-meta">
+                <label>
+                  Date
+                  <input type="date" id="roundDate" required />
+                </label>
+                <label>
+                  Category
+                  <input
+                    type="text"
+                    id="roundCategory"
+                    placeholder="Premier League top scorers 2020/21"
+                    autocomplete="off"
+                    required
+                  />
+                </label>
+              </div>
 
-        <form id="roundForm" class="round-form">
-          <div class="round-meta">
-            <label>
-              Date
-              <input type="date" id="roundDate" required />
-            </label>
-            <label>
-              Category
-              <input
-                type="text"
-                id="roundCategory"
-                placeholder="Premier League top scorers 2020/21"
-                autocomplete="off"
-                required
-              />
-            </label>
-          </div>
+              <div class="players-grid" id="playerForms"></div>
 
-          <div class="players-grid" id="playerForms"></div>
+              <div class="form-actions">
+                <p class="save-message" id="saveMessage" role="status" aria-live="polite"></p>
+                <p class="form-note">Each player can save their own score once for the selected date.</p>
+              </div>
+            </form>
+          </section>
+        </section>
 
-          <div class="form-actions">
-            <p class="save-message" id="saveMessage" role="status" aria-live="polite"></p>
-            <p class="form-note">Each player can save their own score once for the selected date.</p>
-          </div>
-        </form>
-      </section>
-
-      <section class="history-section" aria-labelledby="historyTitle">
-        <div class="section-heading">
-          <div>
-            <p class="eyebrow">Archive</p>
-            <h2 id="historyTitle">Round history</h2>
-          </div>
-          <p class="sync-status" id="appStatus" role="status" aria-live="polite"></p>
-        </div>
-        <div class="history-list" id="historyList"></div>
-      </section>
-    </main>
+        <section class="view-panel" data-view-panel="history" aria-labelledby="historyTitle" hidden>
+          <section class="history-section" aria-labelledby="historyTitle">
+            <div class="section-heading">
+              <div>
+                <p class="eyebrow">Archive</p>
+                <h2 id="historyTitle">Round history</h2>
+              </div>
+              <p class="sync-status" id="appStatus" role="status" aria-live="polite"></p>
+            </div>
+            <div class="history-list" id="historyList"></div>
+          </section>
+        </section>
+      </main>
+    </div>
 
     <template id="playerFormTemplate">
       <article class="player-card">
@@ -144,7 +210,14 @@
         <div class="screenshot-import">
           <input class="screenshot-input" type="file" accept="image/*" aria-label="Score screenshot" />
           <button class="ghost-button screenshot-pick-button" type="button">Choose screenshot</button>
-          <div class="screenshot-dropzone" tabindex="0">Paste or drop image</div>
+          <div
+            class="screenshot-dropzone"
+            role="button"
+            tabindex="0"
+            aria-label="Paste, drop, or choose a score screenshot"
+          >
+            Paste or drop image
+          </div>
           <p class="screenshot-status" role="status" aria-live="polite"></p>
         </div>
         <button class="primary-button player-save-button" type="button">Save score</button>
@@ -168,7 +241,7 @@
       const db = getFirestore(app);
 
       window.goallessFirebase = { db, collection, addDoc, getDocs, deleteDoc, doc, orderBy, query, runTransaction, serverTimestamp };
-      import("./app.js?v=screenshot-import-4");
+      import("./app.js?v=logo-1");
     </script>
   </body>
 </html>
