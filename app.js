@@ -238,6 +238,7 @@ const roundForm = document.querySelector("#roundForm");
 const roundDate = document.querySelector("#roundDate");
 const roundCategory = document.querySelector("#roundCategory");
 const playerForms = document.querySelector("#playerForms");
+const todayRound = document.querySelector("#todayRound");
 const leaderboard = document.querySelector("#leaderboard");
 const historicalSummary = document.querySelector("#historicalSummary");
 const seasonStats = document.querySelector("#seasonStats");
@@ -2294,6 +2295,7 @@ async function handleHistoryClick(event) {
 }
 
 function render() {
+  renderTodayRound();
   renderLeaderboard();
   renderHistoricalStats();
   renderVisualisations();
@@ -2306,7 +2308,211 @@ function render() {
   updateDateAvailability();
 }
 
+function renderTodayRound() {
+  if (!todayRound) {
+    return;
+  }
+
+  if (state.loading) {
+    todayRound.innerHTML = '<div class="empty-state">Checking today\'s round...</div>';
+    return;
+  }
+
+  const today = getToday();
+  const round = state.rounds.find((item) => item.date === today);
+  const todayLabel = formatDate(today);
+
+  if (!round) {
+    todayRound.innerHTML = `
+      <article class="today-card today-empty-card">
+        <div>
+          <p class="today-date">${escapeHtml(todayLabel)}</p>
+          <h3>No score saved yet</h3>
+          <p>Use New round to save today's category and scores.</p>
+        </div>
+        <span class="today-state-pill">Not started</span>
+      </article>
+    `;
+    return;
+  }
+
+  const submittedNames = new Set(round.players.map((player) => player.name));
+  const submittedCount = DEFAULT_PLAYERS.filter((name) => submittedNames.has(name)).length;
+  const waitingPlayers = DEFAULT_PLAYERS.filter((name) => !submittedNames.has(name));
+
+  if (!isRoundComplete(round)) {
+    todayRound.innerHTML = `
+      <article class="today-card today-waiting-card">
+        <div class="today-card-header">
+          <div>
+            <p class="today-date">${escapeHtml(todayLabel)}</p>
+            <h3>${escapeHtml(round.category || "Untitled round")}</h3>
+          </div>
+          <span class="today-state-pill is-waiting">${submittedCount}/${DEFAULT_PLAYERS.length} saved</span>
+        </div>
+        <div class="today-waiting-copy">
+          <strong>Waiting for ${escapeHtml(waitingPlayers.join(" and ") || "the other player")}</strong>
+          <span>Answers and points stay hidden until both players have saved today's score.</span>
+        </div>
+        <div class="today-submission-list">
+          ${renderTodaySubmissionRows(submittedNames)}
+        </div>
+      </article>
+    `;
+    return;
+  }
+
+  const winnerName = getUniqueWinnerName(round.players);
+  const orderedPlayers = orderPlayersForDisplay(round.players);
+  const scoreline = orderedPlayers
+    .map(
+      (player) => `
+        <div class="today-score-player ${player.name === winnerName ? "is-winner" : ""}">
+          <span>${escapeHtml(player.name)}</span>
+          <strong>${formatNumber(player.total)}</strong>
+        </div>
+      `,
+    )
+    .join('<span class="today-versus">vs</span>');
+
+  todayRound.innerHTML = `
+    <article class="today-card is-complete">
+      <div class="today-card-header">
+        <div>
+          <p class="today-date">${escapeHtml(todayLabel)}</p>
+          <h3>${escapeHtml(round.category || "Untitled round")}</h3>
+        </div>
+        <span class="today-state-pill is-complete">${winnerName ? `${escapeHtml(winnerName)} wins` : "Draw"}</span>
+      </div>
+      <div class="today-scoreline" aria-label="Today's result">
+        ${scoreline}
+      </div>
+      <div class="today-result-grid">
+        ${orderedPlayers.map((player) => renderTodayPlayer(player, winnerName)).join("")}
+      </div>
+    </article>
+  `;
+}
+
+function renderTodaySubmissionRows(submittedNames) {
+  return DEFAULT_PLAYERS.map((name) => {
+    const isSubmitted = submittedNames.has(name);
+    return `
+      <div class="today-submission-row ${isSubmitted ? "is-submitted" : ""}">
+        <span class="today-submission-dot" aria-hidden="true"></span>
+        <div>
+          <strong>${escapeHtml(name)}</strong>
+          <small>${isSubmitted ? "Score saved" : "Waiting"}</small>
+        </div>
+      </div>
+    `;
+  }).join("");
+}
+
+function renderTodayPlayer(player, winnerName) {
+  const isWinner = player.name === winnerName;
+  const isDraw = !winnerName;
+
+  return `
+    <section class="today-player-card ${isWinner ? "is-winner" : ""}">
+      <div class="today-player-header">
+        <div>
+          <h4>${escapeHtml(player.name)}</h4>
+          <span>${isWinner ? "Lowest score" : isDraw ? "Drawn result" : "Runner up"}</span>
+        </div>
+        ${isWinner ? '<span class="winner-badge">Winner</span>' : isDraw ? '<span class="winner-badge is-draw">Draw</span>' : ""}
+      </div>
+      <div class="today-total">
+        <span>Total</span>
+        <strong>${formatNumber(player.total)}</strong>
+      </div>
+      <ul class="today-answer-list">
+        ${player.answers
+          .map(
+            (answer, index) => `
+              <li class="${answer.wrong ? "is-wrong" : answer.perfect ? "is-perfect" : ""}">
+                <span>${index + 1}. ${escapeHtml(answer.answer)}</span>
+                <strong>${getAnswerHistoryScoreLabel(answer)}</strong>
+              </li>
+            `,
+          )
+          .join("")}
+      </ul>
+    </section>
+  `;
+}
+
+function orderPlayersForDisplay(players) {
+  return [...players].sort((a, b) => {
+    const playerOrder = DEFAULT_PLAYERS.indexOf(a.name) - DEFAULT_PLAYERS.indexOf(b.name);
+    return playerOrder || a.name.localeCompare(b.name);
+  });
+}
+
 function renderLeaderboard() {
+  const rows = buildLeaderboard();
+  leaderboard.innerHTML = "";
+
+  if (!rows.length) {
+    leaderboard.innerHTML = '<div class="empty-state">Save a round to start the table.</div>';
+    return;
+  }
+
+  const leaderTotal = rows[0].total;
+
+  leaderboard.innerHTML = `
+    <div class="leaderboard-table" role="table" aria-label="Overall leaderboard">
+      <div class="leaderboard-row leaderboard-row-head" role="row">
+        <span>Player</span>
+        <span>Total</span>
+        <span>Average</span>
+        <span>Wins</span>
+        <span>Streak</span>
+      </div>
+      ${rows
+        .map((row, index) => {
+          const nextRow = rows[index + 1];
+          const gapText =
+            index === 0
+              ? nextRow
+                ? `${formatNumber(nextRow.total - row.total)} ahead`
+                : "Leader"
+              : `${formatNumber(row.total - leaderTotal)} behind`;
+
+          return `
+            <article class="leaderboard-row ${index === 0 ? "is-leader" : ""}" role="row">
+              <div class="leaderboard-player-cell">
+                <span class="rank-pill">${index + 1}</span>
+                <div>
+                  <strong>${escapeHtml(row.name)}</strong>
+                  <small>${gapText}</small>
+                </div>
+              </div>
+              <div class="leaderboard-number">
+                <span>Total</span>
+                <strong>${formatNumber(row.total)}</strong>
+              </div>
+              <div class="leaderboard-number">
+                <span>Avg</span>
+                <strong>${formatAverage(row.average)}</strong>
+              </div>
+              <div class="leaderboard-number">
+                <span>Wins</span>
+                <strong>${row.wins}</strong>
+              </div>
+              <div class="leaderboard-number">
+                <span>Now / best</span>
+                <strong>${row.currentStreak}/${row.longestStreak}</strong>
+              </div>
+            </article>
+          `;
+        })
+        .join("")}
+    </div>
+  `;
+}
+
+function renderLeaderboardCards() {
   const rows = buildLeaderboard();
   leaderboard.innerHTML = "";
 
@@ -2436,7 +2642,7 @@ function renderHistoricalStats() {
       <p class="eyebrow">Imported Excel record</p>
       <h3>Historical stats</h3>
     </div>
-    <p>${importedRounds} imported rounds from 2025-2026, ${importedDraws} draw, plus ${completedFirestoreRounds} completed Firestore ${completedFirestoreRounds === 1 ? "round" : "rounds"}.</p>
+    <p>${importedRounds} imported rounds, ${importedDraws} draw${importedDraws === 1 ? "" : "s"}, plus ${completedFirestoreRounds} completed Firestore ${completedFirestoreRounds === 1 ? "round" : "rounds"}.</p>
   `;
 
   seasonStats.innerHTML = seasonSummaries
@@ -2455,8 +2661,18 @@ function renderSeasonCard(season) {
         </div>
         <div class="season-meta">
           <strong>${season.rounds}</strong>
-          <span>${season.draws ? `${season.draws} draw` : "No draws"}</span>
+          <span>rounds</span>
+          <span>${season.draws ? `${season.draws} draw${season.draws === 1 ? "" : "s"}` : "No draws"}</span>
         </div>
+      </div>
+      <div class="season-table-head" aria-hidden="true">
+        <span>Player</span>
+        <span>Total</span>
+        <span>Average</span>
+        <span>Wins</span>
+        <span>Best</span>
+        <span>Worst</span>
+        <span>Streak</span>
       </div>
       <div class="season-player-table">
         ${season.players
@@ -2468,6 +2684,28 @@ function renderSeasonCard(season) {
 }
 
 function renderSeasonPlayer(stats, seasonRounds, index) {
+  return `
+    <section class="season-player ${index === 0 ? "is-season-leader" : ""}">
+      <div class="season-player-main">
+        <span class="season-player-rank">${index + 1}</span>
+        <div>
+          <h4>${escapeHtml(stats.name)}</h4>
+          <span>${formatPercent(stats.wins / seasonRounds)} win rate</span>
+        </div>
+      </div>
+      <div class="season-stat-grid">
+        <div><span>Total</span><strong>${formatNumber(stats.total)}</strong></div>
+        <div><span>Average</span><strong>${formatAverage(stats.average)}</strong></div>
+        <div><span>Wins</span><strong>${stats.wins}</strong></div>
+        <div><span>Best</span><strong>${stats.best}</strong><small>${escapeHtml(stats.bestLabel)}</small></div>
+        <div><span>Worst</span><strong>${stats.worst}</strong><small>${escapeHtml(stats.worstLabel)}</small></div>
+        <div><span>Current / best</span><strong>${stats.currentStreak}/${stats.longestStreak}</strong></div>
+      </div>
+    </section>
+  `;
+}
+
+function renderSeasonPlayerLegacy(stats, seasonRounds, index) {
   return `
     <section class="season-player ${index === 0 ? "is-season-leader" : ""}">
       <div class="season-player-rank">${index + 1}</div>

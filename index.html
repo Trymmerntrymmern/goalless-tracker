@@ -10,7 +10,7 @@
       href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700;800;900&display=swap"
       rel="stylesheet"
     />
-    <link rel="stylesheet" href="style.css?v=logo-1" />
+    <link rel="stylesheet" href="style.css?v=dashboard-today-1" />
   </head>
   <body>
     <div class="app-layout">
@@ -80,6 +80,17 @@
         </header>
 
         <section class="view-panel is-active" data-view-panel="dashboard" aria-labelledby="pageTitle">
+          <section class="today-section" aria-labelledby="todayRoundTitle">
+            <div class="section-heading">
+              <div>
+                <p class="eyebrow">Match day</p>
+                <h2 id="todayRoundTitle">Today&apos;s round</h2>
+              </div>
+              <p class="hint">Answers unlock after both players save</p>
+            </div>
+            <div class="today-round" id="todayRound"></div>
+          </section>
+
           <section class="scoreboard" aria-labelledby="leaderboardTitle">
             <div class="section-heading">
               <div>
@@ -241,7 +252,7 @@
       const db = getFirestore(app);
 
       window.goallessFirebase = { db, collection, addDoc, getDocs, deleteDoc, doc, orderBy, query, runTransaction, serverTimestamp };
-      import("./app.js?v=logo-1");
+      import("./app.js?v=dashboard-today-1");
     </script>
   </body>
 </html>
