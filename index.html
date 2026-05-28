@@ -10,7 +10,7 @@
       href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700;800;900&display=swap"
       rel="stylesheet"
     />
-    <link rel="stylesheet" href="style.css?v=dashboard-history-1" />
+    <link rel="stylesheet" href="style.css?v=pro-polish-1" />
   </head>
   <body>
     <div class="app-layout">
@@ -46,19 +46,42 @@
 
         <nav class="sidebar-nav" aria-label="Goalless Tracker sections">
           <button class="nav-item is-active" type="button" data-view="dashboard" aria-current="page">
-            <span class="nav-icon" aria-hidden="true">&#8962;</span>
+            <span class="nav-icon" aria-hidden="true">
+              <svg viewBox="0 0 24 24" focusable="false">
+                <path d="M4 10.5 12 4l8 6.5" />
+                <path d="M6.5 9.5V20h11V9.5" />
+                <path d="M10 20v-5h4v5" />
+              </svg>
+            </span>
             <span>Dashboard</span>
           </button>
           <button class="nav-item" type="button" data-view="new-round">
-            <span class="nav-icon" aria-hidden="true">+</span>
+            <span class="nav-icon" aria-hidden="true">
+              <svg viewBox="0 0 24 24" focusable="false">
+                <path d="M12 5v14" />
+                <path d="M5 12h14" />
+              </svg>
+            </span>
             <span>New round</span>
           </button>
           <button class="nav-item" type="button" data-view="trends">
-            <span class="nav-icon" aria-hidden="true">&#8599;</span>
+            <span class="nav-icon" aria-hidden="true">
+              <svg viewBox="0 0 24 24" focusable="false">
+                <path d="M4 17 9 12l4 4 7-8" />
+                <path d="M15 8h5v5" />
+              </svg>
+            </span>
             <span>Trends</span>
           </button>
           <button class="nav-item" type="button" data-view="history">
-            <span class="nav-icon" aria-hidden="true">&#9638;</span>
+            <span class="nav-icon" aria-hidden="true">
+              <svg viewBox="0 0 24 24" focusable="false">
+                <path d="M5 5h14v14H5z" />
+                <path d="M8 9h8" />
+                <path d="M8 13h8" />
+                <path d="M8 17h5" />
+              </svg>
+            </span>
             <span>History</span>
           </button>
         </nav>
@@ -252,7 +275,7 @@
       const db = getFirestore(app);
 
       window.goallessFirebase = { db, collection, addDoc, getDocs, deleteDoc, doc, orderBy, query, runTransaction, serverTimestamp };
-      import("./app.js?v=dashboard-history-1");
+      import("./app.js?v=pro-polish-1");
     </script>
   </body>
 </html>
