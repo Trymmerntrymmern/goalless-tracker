@@ -3809,20 +3809,22 @@ function renderHistory() {
 }
 
 function getHistoryRounds() {
-  const importedRounds = HISTORICAL_ROUNDS.map((round, index) => ({
-    type: "imported",
-    round,
-    order: index,
-    sortValue: getHistorySortValue(round, index),
-  }));
-  const savedRounds = state.rounds
-    .filter((round) => !HISTORICAL_ROUND_DATES.has(round.date))
+  const firestoreDates = new Set(state.rounds.map((round) => round.date).filter(Boolean));
+
+  const importedRounds = HISTORICAL_ROUNDS
+    .filter((round) => !round.date || !firestoreDates.has(round.date))
     .map((round, index) => ({
-      type: "saved",
+      type: "imported",
       round,
-      order: HISTORICAL_ROUNDS.length + index,
-      sortValue: getHistorySortValue(round, HISTORICAL_ROUNDS.length + index),
+      order: index,
+      sortValue: getHistorySortValue(round, index),
     }));
+  const savedRounds = state.rounds.map((round, index) => ({
+    type: "saved",
+    round,
+    order: HISTORICAL_ROUNDS.length + index,
+    sortValue: getHistorySortValue(round, HISTORICAL_ROUNDS.length + index),
+  }));
 
   return [...importedRounds, ...savedRounds].sort(
     (a, b) => b.sortValue - a.sortValue || b.order - a.order,
