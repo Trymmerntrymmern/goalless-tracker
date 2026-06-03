@@ -2061,6 +2061,13 @@ input:focus {
   overflow-wrap: anywhere;
 }
 
+.history-score-note {
+  margin-bottom: 10px;
+  color: var(--muted);
+  font-size: 0.85rem;
+  font-weight: 750;
+}
+
 .winner-badge {
   flex: 0 0 auto;
   padding: 5px 9px;

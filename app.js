@@ -274,7 +274,9 @@ init();
 
 async function init() {
   initNavigation();
-  roundDate.value = state.draft?.date || getToday();
+  const initialDate = getInitialRoundDate();
+  resetDraftForDateIfNeeded(initialDate);
+  roundDate.value = initialDate;
   roundCategory.value = getDraftCategoryForDate(roundDate.value);
   state.categoryDate = roundDate.value;
   renderPlayerForms();
@@ -293,7 +295,14 @@ async function init() {
 
   if (!firebase?.db) {
     state.loading = false;
-    showStatus("Firebase did not initialize.", true);
+    state.rounds = loadLegacyRounds();
+    sortRounds();
+    showStatus(
+      state.rounds.length
+        ? "Firebase did not initialize. Showing local rounds only."
+        : "Firebase did not initialize.",
+      true,
+    );
     render();
     return;
   }
@@ -391,6 +400,38 @@ function savePlayerEmails() {
 function loadDraft(players) {
   const saved = readJson(DRAFT_STORAGE_KEY);
   return normalizeDraft(saved, players);
+}
+
+function getInitialRoundDate() {
+  return getToday();
+}
+
+function resetDraftForDateIfNeeded(date) {
+  if (!state.draft || normalizeDateValue(state.draft.date) === date) {
+    return;
+  }
+
+  const categories =
+    state.draft.categories && typeof state.draft.categories === "object"
+      ? state.draft.categories
+      : {};
+
+  state.draft = normalizeDraft(
+    {
+      date,
+      categories,
+      players: state.players.map((playerName, playerIndex) => ({
+        name: state.draft?.players?.[playerIndex]?.name || playerName,
+      })),
+    },
+    state.players,
+  );
+  localStorage.setItem(DRAFT_STORAGE_KEY, JSON.stringify(state.draft));
+}
+
+function normalizeDateValue(value) {
+  const date = String(value || "").trim();
+  return /^\d{4}-\d{2}-\d{2}$/.test(date) ? date : "";
 }
 
 function readJson(key) {
@@ -1774,13 +1815,20 @@ async function loadRounds() {
   render();
 
   try {
-    state.rounds = await fetchFirestoreRounds();
+    state.rounds = mergeRounds(loadLegacyRounds(), await fetchFirestoreRounds());
     sortRounds();
     syncCategoryForSelectedDate({ force: true });
     showStatus("");
   } catch (error) {
     console.error("Unable to load rounds.", error);
-    showStatus("Could not load Firestore rounds.", true);
+    state.rounds = loadLegacyRounds();
+    sortRounds();
+    showStatus(
+      state.rounds.length
+        ? "Could not load Firestore rounds. Showing local rounds only."
+        : "Could not load Firestore rounds.",
+      true,
+    );
   } finally {
     state.loading = false;
     render();
@@ -1788,18 +1836,54 @@ async function loadRounds() {
 }
 
 async function fetchFirestoreRounds() {
-  const roundsQuery = firebase.query(
-    firebase.collection(firebase.db, ROUNDS_COLLECTION),
-    firebase.orderBy("date", "desc"),
-  );
-  const snapshot = await firebase.getDocs(roundsQuery);
+  const snapshot = await firebase.getDocs(firebase.collection(firebase.db, ROUNDS_COLLECTION));
 
   return snapshot.docs.map((roundDoc) =>
-    normalizeRound({
-      id: roundDoc.id,
-      ...roundDoc.data(),
-    }),
+    normalizeRoundFromFirestoreDoc(roundDoc),
   );
+}
+
+function normalizeRoundFromFirestoreDoc(roundDoc) {
+  const data = roundDoc.data() || {};
+
+  return normalizeRound({
+    ...data,
+    id: roundDoc.id,
+    date: data.date || roundDoc.id,
+  });
+}
+
+function loadLegacyRounds() {
+  const legacy = readJson(LEGACY_STORAGE_KEY);
+  const rounds = Array.isArray(legacy)
+    ? legacy
+    : Array.isArray(legacy?.rounds)
+      ? legacy.rounds
+      : [];
+
+  return rounds
+    .filter((round) => round && typeof round === "object")
+    .map((round, index) =>
+      normalizeRound({
+        ...round,
+        id: round.id || round.date || `legacy-${index + 1}`,
+        date: round.date || round.id,
+      }),
+    )
+    .filter((round) => round.players.length);
+}
+
+function mergeRounds(...roundGroups) {
+  const roundsByKey = new Map();
+
+  roundGroups.flat().forEach((round) => {
+    const key = round.id || round.date;
+    if (key) {
+      roundsByKey.set(key, round);
+    }
+  });
+
+  return [...roundsByKey.values()];
 }
 
 async function savePlayerOnce(date, category, playerEntry) {
@@ -1933,6 +2017,21 @@ function getDraftCategoryForDate(date) {
   return "";
 }
 
+function advanceFormToTodayAfterPastSave(savedDate) {
+  const today = getToday();
+  const cleanSavedDate = normalizeDateValue(savedDate);
+
+  if (!cleanSavedDate || cleanSavedDate >= today) {
+    return;
+  }
+
+  resetDraftForDateIfNeeded(today);
+  roundDate.value = today;
+  roundCategory.value = getCategoryForDate(today);
+  state.categoryDate = today;
+  renderPlayerForms();
+}
+
 async function handleSavePlayer(playerIndex) {
   const selectedDate = roundDate.value || getToday();
   const existingDateRound = state.rounds.find((round) => round.date === selectedDate);
@@ -1965,7 +2064,7 @@ async function handleSavePlayer(playerIndex) {
   showMessage(`Checking ${playerEntry.name}'s score...`);
 
   try {
-    state.rounds = await fetchFirestoreRounds();
+    state.rounds = mergeRounds(loadLegacyRounds(), await fetchFirestoreRounds());
     sortRounds();
 
     const refreshedDateRound = state.rounds.find((round) => round.date === selectedDate);
@@ -1987,11 +2086,12 @@ async function handleSavePlayer(playerIndex) {
     sortRounds();
     clearPlayerInputs(playerIndex);
     persistDraft();
+    advanceFormToTodayAfterPastSave(selectedDate);
     render();
     showMessage(getSaveSuccessMessage(playerEntry.name, notificationResult));
   } catch (error) {
     if (error?.message === DUPLICATE_PLAYER_ERROR) {
-      state.rounds = await fetchFirestoreRounds();
+      state.rounds = mergeRounds(loadLegacyRounds(), await fetchFirestoreRounds());
       sortRounds();
       render();
       showDuplicatePlayerMessage(selectedDate, playerEntry.name, { source: "Firestore" });
@@ -2021,8 +2121,7 @@ async function queueRoundNotificationEmails(round, savedPlayerName) {
 }
 
 async function queueReminderEmail(round, savedPlayerName) {
-  const submittedPlayers = new Set(round.players.map((player) => canonicalizePlayerName(player.name)));
-  const missingPlayers = state.players.filter((playerName) => !submittedPlayers.has(playerName));
+  const missingPlayers = getMissingPlayersForRound(round);
   const recipients = getRecipientEmails(missingPlayers);
 
   if (!recipients.length) {
@@ -2357,9 +2456,12 @@ function renderTodayRound() {
     return;
   }
 
-  const submittedNames = new Set(round.players.map((player) => player.name));
-  const submittedCount = DEFAULT_PLAYERS.filter((name) => submittedNames.has(name)).length;
-  const waitingPlayers = DEFAULT_PLAYERS.filter((name) => !submittedNames.has(name));
+  const submittedNames = getSubmittedPlayerNames(round);
+  const configuredPlayers = getConfiguredPlayers();
+  const submittedCount = configuredPlayers.filter((name) =>
+    submittedNames.has(canonicalizePlayerName(name)),
+  ).length;
+  const waitingPlayers = getMissingPlayersForRound(round);
 
   if (!isRoundComplete(round)) {
     todayRound.innerHTML = `
@@ -2369,7 +2471,7 @@ function renderTodayRound() {
             <p class="today-date">${escapeHtml(todayLabel)}</p>
             <h3>${escapeHtml(round.category || "Untitled round")}</h3>
           </div>
-          <span class="today-state-pill is-waiting">${submittedCount}/${DEFAULT_PLAYERS.length} saved</span>
+          <span class="today-state-pill is-waiting">${submittedCount}/${configuredPlayers.length} saved</span>
         </div>
         <div class="today-waiting-copy">
           <strong>Waiting for ${escapeHtml(waitingPlayers.join(" and ") || "the other player")}</strong>
@@ -2416,8 +2518,8 @@ function renderTodayRound() {
 }
 
 function renderTodaySubmissionRows(submittedNames) {
-  return DEFAULT_PLAYERS.map((name) => {
-    const isSubmitted = submittedNames.has(name);
+  return getConfiguredPlayers().map((name) => {
+    const isSubmitted = submittedNames.has(canonicalizePlayerName(name));
     return `
       <div class="today-submission-row ${isSubmitted ? "is-submitted" : ""}">
         <span class="today-submission-dot" aria-hidden="true"></span>
@@ -2464,9 +2566,14 @@ function renderTodayPlayer(player, winnerName) {
 }
 
 function orderPlayersForDisplay(players) {
+  const configuredPlayers = getConfiguredPlayers();
+
   return [...players].sort((a, b) => {
-    const playerOrder = DEFAULT_PLAYERS.indexOf(a.name) - DEFAULT_PLAYERS.indexOf(b.name);
-    return playerOrder || a.name.localeCompare(b.name);
+    const aIndex = configuredPlayers.indexOf(canonicalizePlayerName(a.name));
+    const bIndex = configuredPlayers.indexOf(canonicalizePlayerName(b.name));
+    const aOrder = aIndex >= 0 ? aIndex : Number.MAX_SAFE_INTEGER;
+    const bOrder = bIndex >= 0 ? bIndex : Number.MAX_SAFE_INTEGER;
+    return aOrder - bOrder || a.name.localeCompare(b.name);
   });
 }
 
@@ -3685,24 +3792,77 @@ function renderHistory() {
     return;
   }
 
-  if (!state.rounds.length) {
-    historyList.innerHTML = '<div class="empty-state">No new Firestore rounds saved yet. Imported Excel stats are shown above.</div>';
+  const historyRounds = getHistoryRounds();
+
+  if (!historyRounds.length) {
+    historyList.innerHTML = '<div class="empty-state">No rounds available yet.</div>';
     return;
   }
 
-  state.rounds.forEach((round) => {
-    const winnerName = getUniqueWinnerName(round.players);
-    const isComplete = isRoundComplete(round);
-    const card = document.createElement("article");
-    card.className = "history-card";
-    card.innerHTML = `
+  historyRounds.forEach((historyRound) => {
+    historyList.appendChild(
+      historyRound.type === "imported"
+        ? createImportedHistoryCard(historyRound.round)
+        : createSavedHistoryCard(historyRound.round),
+    );
+  });
+}
+
+function getHistoryRounds() {
+  const importedRounds = HISTORICAL_ROUNDS.map((round, index) => ({
+    type: "imported",
+    round,
+    order: index,
+    sortValue: getHistorySortValue(round, index),
+  }));
+  const savedRounds = state.rounds
+    .filter((round) => !HISTORICAL_ROUND_DATES.has(round.date))
+    .map((round, index) => ({
+      type: "saved",
+      round,
+      order: HISTORICAL_ROUNDS.length + index,
+      sortValue: getHistorySortValue(round, HISTORICAL_ROUNDS.length + index),
+    }));
+
+  return [...importedRounds, ...savedRounds].sort(
+    (a, b) => b.sortValue - a.sortValue || b.order - a.order,
+  );
+}
+
+function getHistorySortValue(round, fallbackOrder) {
+  if (round.date) {
+    const timestamp = new Date(`${round.date}T00:00:00`).getTime();
+    if (Number.isFinite(timestamp)) {
+      return timestamp;
+    }
+  }
+
+  if (Number.isFinite(Number(round.year))) {
+    return new Date(`${round.year}-01-01T00:00:00`).getTime() + fallbackOrder;
+  }
+
+  return fallbackOrder;
+}
+
+function createSavedHistoryCard(round) {
+  const winnerName = getUniqueWinnerName(round.players);
+  const isComplete = isRoundComplete(round);
+  const configuredPlayers = getConfiguredPlayers();
+  const submittedPlayers = getSubmittedPlayerNames(round);
+  const submittedCount = configuredPlayers.filter((playerName) =>
+    submittedPlayers.has(canonicalizePlayerName(playerName)),
+  ).length;
+  const participantCount = configuredPlayers.length;
+  const card = document.createElement("article");
+  card.className = "history-card";
+  card.innerHTML = `
       <div class="history-top">
         <div>
           <p class="round-date">${formatDate(round.date)}</p>
           <h3 class="round-category">${escapeHtml(round.category)}</h3>
         </div>
         <div class="history-actions">
-          <span class="submission-badge">${round.players.length}/2 saved</span>
+          <span class="submission-badge">${submittedCount}/${participantCount} saved</span>
           <button class="delete-button" type="button" data-delete-round="${round.id}">Delete</button>
         </div>
       </div>
@@ -3716,14 +3876,56 @@ function renderHistory() {
           : renderPrivateRoundState(round)
       }
     `;
-    historyList.appendChild(card);
-  });
+  return card;
+}
+
+function createImportedHistoryCard(round) {
+  const scores = {
+    Trym: round.trym,
+    Nicolai: round.nicolai,
+  };
+  const winnerName = getWinnerFromScores(scores);
+  const players = orderPlayersForDisplay([
+    { name: "Trym", total: scores.Trym },
+    { name: "Nicolai", total: scores.Nicolai },
+  ]);
+  const card = document.createElement("article");
+  card.className = "history-card history-card-imported";
+  card.innerHTML = `
+      <div class="history-top">
+        <div>
+          <p class="round-date">${escapeHtml(round.date ? formatDate(round.date) : round.label)}</p>
+          <h3 class="round-category">Imported Excel round</h3>
+        </div>
+        <div class="history-actions">
+          <span class="submission-badge">Excel import</span>
+        </div>
+      </div>
+      <div class="history-players">
+        ${players.map((player) => renderImportedHistoryPlayer(player, player.name === winnerName)).join("")}
+      </div>
+    `;
+  return card;
+}
+
+function renderImportedHistoryPlayer(player, isWinner) {
+  return `
+    <section class="history-player ${isWinner ? "is-winner" : ""}">
+      <div class="history-player-header">
+        <h3 class="history-player-name">${escapeHtml(player.name)}</h3>
+        ${isWinner ? '<span class="winner-badge">Winner</span>' : ""}
+      </div>
+      <p class="history-score-note">Imported total only</p>
+      <div class="history-total">
+        <span>Total</span>
+        <strong>${formatNumber(player.total)}</strong>
+      </div>
+    </section>
+  `;
 }
 
 function renderPrivateRoundState(round) {
-  const missingPlayers = state.players.filter(
-    (playerName) => !round.players.some((player) => player.name === playerName),
-  );
+  const missingPlayers = getMissingPlayersForRound(round);
 
   return `
     <div class="private-round-state">
@@ -3777,10 +3979,11 @@ function getAnswerHistoryScoreLabel(answer) {
 
 function normalizeRound(round) {
   const players = Array.isArray(round.players) ? round.players : [];
+  const date = normalizeDateValue(round.date) || normalizeDateValue(round.id) || getToday();
 
   return {
-    id: String(round.id),
-    date: String(round.date || getToday()),
+    id: String(round.id || date),
+    date,
     category: String(round.category || "Untitled round"),
     createdAt: String(round.createdAt || ""),
     players: players.slice(0, 2).map((player, playerIndex) => {
@@ -3858,9 +4061,23 @@ function getUniqueWinnerName(players) {
   return winners.length === 1 ? winners[0].name : null;
 }
 
+function getConfiguredPlayers() {
+  return normalizePlayers(state.players);
+}
+
+function getSubmittedPlayerNames(round) {
+  return new Set(round.players.map((player) => canonicalizePlayerName(player.name)).filter(Boolean));
+}
+
+function getMissingPlayersForRound(round) {
+  const submittedPlayers = getSubmittedPlayerNames(round);
+  return getConfiguredPlayers().filter(
+    (playerName) => !submittedPlayers.has(canonicalizePlayerName(playerName)),
+  );
+}
+
 function isRoundComplete(round) {
-  const submittedPlayers = new Set(round.players.map((player) => player.name));
-  return DEFAULT_PLAYERS.every((playerName) => submittedPlayers.has(playerName));
+  return getMissingPlayersForRound(round).length === 0;
 }
 
 function getCompletedFirestoreRounds() {
