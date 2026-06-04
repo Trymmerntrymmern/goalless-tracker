@@ -1836,7 +1836,11 @@ async function loadRounds() {
 }
 
 async function fetchFirestoreRounds() {
-  const snapshot = await firebase.getDocs(firebase.collection(firebase.db, ROUNDS_COLLECTION));
+  const roundsQuery = firebase.query(
+    firebase.collection(firebase.db, ROUNDS_COLLECTION),
+    firebase.orderBy("date", "desc"),
+  );
+  const snapshot = await firebase.getDocs(roundsQuery);
 
   return snapshot.docs.map((roundDoc) =>
     normalizeRoundFromFirestoreDoc(roundDoc),
@@ -3793,8 +3797,6 @@ function renderHistory() {
   }
 
   const historyRounds = getHistoryRounds();
-  const savedCount = historyRounds.filter((r) => r.type === "saved").length;
-  showStatus(`${state.rounds.length} Firebase rounds loaded, ${savedCount} shown in history.`);
 
   if (!historyRounds.length) {
     historyList.innerHTML = '<div class="empty-state">No rounds available yet.</div>';
