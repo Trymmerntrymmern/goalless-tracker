@@ -1823,12 +1823,7 @@ async function loadRounds() {
     console.error("Unable to load rounds.", error);
     state.rounds = loadLegacyRounds();
     sortRounds();
-    showStatus(
-      state.rounds.length
-        ? "Could not load Firestore rounds. Showing local rounds only."
-        : "Could not load Firestore rounds.",
-      true,
-    );
+    showStatus(`Firebase error: ${error?.code || error?.message || String(error)}`, true);
   } finally {
     state.loading = false;
     render();
