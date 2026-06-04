@@ -13,7 +13,7 @@ const OCR_WRONG_PATTERN = /\b(wrong|incorrect|invalid|missed|not found|no answer
 const SCORE_SCREENSHOT_SCALE = 4;
 const SCORE_SCREENSHOT_TEXT_PADDING = 18;
 const SCORE_SCREENSHOT_ANSWER_COLUMN_RATIO = 0.82;
-const SCORE_SCREENSHOT_SCORE_COLUMN_RATIO = 0.76;
+const SCORE_SCREENSHOT_SCORE_COLUMN_RATIO = 0.65;
 const SCORE_SCREENSHOT_MAX_BYTES = 8 * 1024 * 1024;
 const SCORE_SCREENSHOT_MAX_DIMENSION = 2400;
 const SCORE_SCREENSHOT_MAX_PIXELS = 4_000_000;
@@ -847,7 +847,7 @@ async function recognizeStructuredScoreScreenshot(file, card) {
       let points = wrong ? 100 : perfect ? 0 : null;
 
       if (!wrong && !perfect) {
-        const scoreText = await recognizeScoreCrop(
+        const scoreText = await recognizeScoreDigits(
           sourceCanvas,
           getScoreValueCrop(sourceCanvas, row),
           ocr,
@@ -863,12 +863,21 @@ async function recognizeStructuredScoreScreenshot(file, card) {
       });
     }
 
-    const totalText = await recognizeScoreCrop(
+    const totalText = await recognizeScoreDigits(
       sourceCanvas,
       getScoreTotalCrop(sourceCanvas, layout.rows[0]),
       ocr,
     );
-    const total = parseScreenshotScoreValue(totalText, { max: 999 });
+    let total = parseScreenshotScoreValue(totalText, { max: 500, preferLargest: true });
+
+    if (!Number.isFinite(total)) {
+      const bottomText = await recognizeScoreDigits(
+        sourceCanvas,
+        getScoreBottomTotalCrop(sourceCanvas, layout.rows[layout.rows.length - 1]),
+        ocr,
+      );
+      total = parseScreenshotScoreValue(bottomText, { max: 500, preferLargest: true });
+    }
     const reconciled = reconcileStructuredScores(answers, total);
 
     return {
@@ -899,6 +908,13 @@ async function recognizeScoreCrop(sourceCanvas, crop, ocr) {
   return ocr.recognize(textCanvas);
 }
 
+async function recognizeScoreDigits(sourceCanvas, crop, ocr) {
+  const textCanvas = createWhiteTextMaskCanvas(sourceCanvas, crop);
+  return typeof ocr.recognizeDigits === "function"
+    ? ocr.recognizeDigits(textCanvas)
+    : ocr.recognize(textCanvas);
+}
+
 async function createScreenshotOcrSession(card) {
   const Tesseract = await loadTesseract();
   const logger = (message) => {
@@ -908,14 +924,19 @@ async function createScreenshotOcrSession(card) {
     }
   };
 
+  const fallbackSession = {
+    async recognize(image) {
+      const result = await Tesseract.recognize(image, OCR_LANGUAGE, { logger });
+      return String(result?.data?.text || "").trim();
+    },
+    async recognizeDigits(image) {
+      return this.recognize(image);
+    },
+    async terminate() {},
+  };
+
   if (typeof Tesseract.createWorker !== "function") {
-    return {
-      async recognize(image) {
-        const result = await Tesseract.recognize(image, OCR_LANGUAGE, { logger });
-        return String(result?.data?.text || "").trim();
-      },
-      async terminate() {},
-    };
+    return fallbackSession;
   }
 
   let worker = null;
@@ -923,29 +944,39 @@ async function createScreenshotOcrSession(card) {
     worker = await Tesseract.createWorker(OCR_LANGUAGE, 1, { logger });
   } catch (error) {
     console.warn("Unable to create reusable OCR worker.", error);
-    return {
-      async recognize(image) {
-        const result = await Tesseract.recognize(image, OCR_LANGUAGE, { logger });
-        return String(result?.data?.text || "").trim();
-      },
-      async terminate() {},
-    };
+    return fallbackSession;
   }
 
-  if (typeof worker.setParameters === "function") {
-    try {
-      await worker.setParameters({
-        preserve_interword_spaces: "1",
-        tessedit_pageseg_mode: "7",
-      });
-    } catch (error) {
-      console.warn("Unable to tune OCR worker.", error);
+  const setTextParams = async () => {
+    if (typeof worker.setParameters === "function") {
+      try {
+        await worker.setParameters({
+          tessedit_char_whitelist: "",
+          preserve_interword_spaces: "1",
+          tessedit_pageseg_mode: "7",
+        });
+      } catch (e) { /* ignore */ }
     }
-  }
+  };
+
+  await setTextParams();
 
   return {
     async recognize(image) {
       const result = await worker.recognize(image);
+      return String(result?.data?.text || "").trim();
+    },
+    async recognizeDigits(image) {
+      if (typeof worker.setParameters === "function") {
+        try {
+          await worker.setParameters({
+            tessedit_char_whitelist: "0123456789",
+            tessedit_pageseg_mode: "7",
+          });
+        } catch (e) { /* ignore */ }
+      }
+      const result = await worker.recognize(image);
+      await setTextParams();
       return String(result?.data?.text || "").trim();
     },
     async terminate() {
@@ -1094,7 +1125,7 @@ function mergeCloseScoreSegments(segments) {
 
   segments.forEach((segment) => {
     const previous = merged[merged.length - 1];
-    if (previous && segment.yMin - previous.yMax <= 3) {
+    if (previous && segment.yMin - previous.yMax <= 6) {
       previous.yMax = segment.yMax;
       return;
     }
@@ -1175,20 +1206,20 @@ function getScorePixelKind(red, green, blue, alpha) {
   const minimum = Math.min(red, green, blue);
   const saturation = maximum - minimum;
 
-  if (green >= 115 && green > red * 1.25 && green > blue * 1.12 && saturation >= 45) {
+  if (green >= 90 && green > red * 1.15 && green > blue * 1.05 && saturation >= 30) {
     return "green";
   }
 
-  if (red >= 145 && red > green * 1.35 && red > blue * 1.05 && saturation >= 45) {
+  if (red >= 110 && red > green * 1.2 && red > blue * 1.05 && saturation >= 30) {
     return "red";
   }
 
   if (
-    maximum >= 145 &&
-    minimum >= 70 &&
-    saturation >= 28 &&
+    maximum >= 120 &&
+    minimum >= 55 &&
+    saturation >= 22 &&
     red <= 230 &&
-    (blue >= 145 || green >= 145) &&
+    (blue >= 120 || green >= 120) &&
     (blue > red + 4 || green > red + 10 || blue > green + 20)
   ) {
     return "perfect";
@@ -1237,13 +1268,25 @@ function getScoreRowInnerVerticalCrop(row) {
 
 function getScoreTotalCrop(canvas, firstRow) {
   const yMax = Math.max(1, firstRow.yMin - 2);
-  const x = Math.round(canvas.width * 0.25);
+  const x = Math.round(canvas.width * 0.1);
 
   return normalizeCropBox({
     x,
     y: 0,
-    width: Math.round(canvas.width * 0.5),
+    width: Math.round(canvas.width * 0.8),
     height: yMax,
+  }, canvas);
+}
+
+function getScoreBottomTotalCrop(canvas, lastRow) {
+  const yMin = Math.min(canvas.height - 1, lastRow.yMax + 2);
+  const x = Math.round(canvas.width * 0.1);
+
+  return normalizeCropBox({
+    x,
+    y: yMin,
+    width: Math.round(canvas.width * 0.8),
+    height: Math.max(1, canvas.height - yMin),
   }, canvas);
 }
 
@@ -1358,7 +1401,7 @@ function isWhiteTextPixel(red, green, blue, alpha) {
   const spread = Math.max(red, green, blue) - Math.min(red, green, blue);
   const minimum = Math.min(red, green, blue);
 
-  return brightness >= 190 && minimum >= 168 && spread <= 105;
+  return brightness >= 175 && minimum >= 148 && spread <= 120;
 }
 
 function reconcileStructuredScores(answers, total) {
@@ -1408,22 +1451,29 @@ function parseScreenshotScoreValue(text, options = {}) {
   const max = Number.isFinite(options.max) ? options.max : 100;
   const normalized = normalizeOcrDigits(text);
   const matches = normalized.match(/\d{1,3}/g) || [];
+  const valid = [];
 
   for (const match of matches) {
     const value = Number.parseInt(match, 10);
     if (Number.isFinite(value) && value >= 0 && value <= max) {
-      return value;
+      valid.push(value);
     }
   }
 
-  return null;
+  if (!valid.length) {
+    return null;
+  }
+
+  return options.preferLargest ? Math.max(...valid) : valid[0];
 }
 
 function normalizeOcrDigits(text) {
   return String(text || "")
     .replace(/[oO]/g, "0")
     .replace(/[iIlL|]/g, "1")
+    .replace(/[zZ]/g, "2")
     .replace(/[sS]/g, "5")
+    .replace(/[gq]/g, "9")
     .replace(/[bB]/g, "8");
 }
 
