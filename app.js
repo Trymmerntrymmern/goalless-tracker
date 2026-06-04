@@ -3793,6 +3793,8 @@ function renderHistory() {
   }
 
   const historyRounds = getHistoryRounds();
+  const savedCount = historyRounds.filter((r) => r.type === "saved").length;
+  showStatus(`${state.rounds.length} Firebase rounds loaded, ${savedCount} shown in history.`);
 
   if (!historyRounds.length) {
     historyList.innerHTML = '<div class="empty-state">No rounds available yet.</div>';
