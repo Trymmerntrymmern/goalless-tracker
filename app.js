@@ -840,6 +840,7 @@ async function recognizeStructuredScoreScreenshot(file, card) {
         sourceCanvas,
         getScoreAnswerCrop(sourceCanvas, row),
         ocr,
+        row.kind,
       );
       const answer = cleanStructuredAnswerText(answerText) || `Answer ${index + 1}`;
       const wrong = row.kind === "wrong";
@@ -903,8 +904,10 @@ async function recognizeScreenshotText(file, card) {
   return String(result?.data?.text || "").trim();
 }
 
-async function recognizeScoreCrop(sourceCanvas, crop, ocr) {
-  const textCanvas = createWhiteTextMaskCanvas(sourceCanvas, crop);
+async function recognizeScoreCrop(sourceCanvas, crop, ocr, rowKind) {
+  const textCanvas = rowKind === "perfect"
+    ? createAdaptiveBrightnessMaskCanvas(sourceCanvas, crop)
+    : createWhiteTextMaskCanvas(sourceCanvas, crop);
   return ocr.recognize(textCanvas);
 }
 
@@ -1353,6 +1356,100 @@ function createWhiteTextMaskCanvas(sourceCanvas, crop) {
   return outputCanvas;
 }
 
+function createAdaptiveBrightnessMaskCanvas(sourceCanvas, crop) {
+  const scaledWidth = Math.max(1, crop.width * SCORE_SCREENSHOT_SCALE);
+  const scaledHeight = Math.max(1, crop.height * SCORE_SCREENSHOT_SCALE);
+  const rawCanvas = document.createElement("canvas");
+  rawCanvas.width = scaledWidth;
+  rawCanvas.height = scaledHeight;
+
+  const rawContext = rawCanvas.getContext("2d", { willReadFrequently: true });
+  rawContext.imageSmoothingEnabled = true;
+  rawContext.drawImage(
+    sourceCanvas,
+    crop.x,
+    crop.y,
+    crop.width,
+    crop.height,
+    0,
+    0,
+    scaledWidth,
+    scaledHeight,
+  );
+
+  const rawImage = rawContext.getImageData(0, 0, scaledWidth, scaledHeight);
+  const textMask = createAdaptiveBrightnessTextMask(rawImage);
+  const outputCanvas = document.createElement("canvas");
+  outputCanvas.width = scaledWidth + SCORE_SCREENSHOT_TEXT_PADDING * 2;
+  outputCanvas.height = scaledHeight + SCORE_SCREENSHOT_TEXT_PADDING * 2;
+
+  const outputContext = outputCanvas.getContext("2d", { willReadFrequently: true });
+  const outputImage = outputContext.createImageData(outputCanvas.width, outputCanvas.height);
+  outputImage.data.fill(255);
+
+  for (let y = 0; y < scaledHeight; y += 1) {
+    for (let x = 0; x < scaledWidth; x += 1) {
+      const destinationX = x + SCORE_SCREENSHOT_TEXT_PADDING;
+      const destinationY = y + SCORE_SCREENSHOT_TEXT_PADDING;
+      const destinationOffset = (destinationY * outputCanvas.width + destinationX) * 4;
+      const isText = textMask[y * scaledWidth + x];
+
+      outputImage.data[destinationOffset] = isText ? 0 : 255;
+      outputImage.data[destinationOffset + 1] = isText ? 0 : 255;
+      outputImage.data[destinationOffset + 2] = isText ? 0 : 255;
+      outputImage.data[destinationOffset + 3] = 255;
+    }
+  }
+
+  outputContext.putImageData(outputImage, 0, 0);
+  return outputCanvas;
+}
+
+function createAdaptiveBrightnessTextMask(image) {
+  const { width, height, data } = image;
+  const pixelCount = width * height;
+  const brightnesses = new Float32Array(pixelCount);
+
+  for (let index = 0; index < pixelCount; index += 1) {
+    const offset = index * 4;
+    brightnesses[index] = data[offset + 3] < 100
+      ? 0
+      : (data[offset] + data[offset + 1] + data[offset + 2]) / 3;
+  }
+
+  // Use the 90th-percentile brightness as a proxy for the background level,
+  // then require text pixels to be clearly brighter than that.
+  const sorted = brightnesses.slice().sort();
+  const p90 = sorted[Math.floor(pixelCount * 0.9)];
+  const textThreshold = Math.min(255, Math.max(200, p90 + 20));
+
+  const baseMask = new Uint8Array(pixelCount);
+  for (let index = 0; index < pixelCount; index += 1) {
+    baseMask[index] = brightnesses[index] >= textThreshold ? 1 : 0;
+  }
+
+  const dilatedMask = new Uint8Array(pixelCount);
+  for (let y = 0; y < height; y += 1) {
+    for (let x = 0; x < width; x += 1) {
+      const index = y * width + x;
+      if (!baseMask[index]) {
+        continue;
+      }
+      for (let offsetY = -1; offsetY <= 1; offsetY += 1) {
+        for (let offsetX = -1; offsetX <= 1; offsetX += 1) {
+          const nextX = x + offsetX;
+          const nextY = y + offsetY;
+          if (nextX >= 0 && nextX < width && nextY >= 0 && nextY < height) {
+            dilatedMask[nextY * width + nextX] = 1;
+          }
+        }
+      }
+    }
+  }
+
+  return dilatedMask;
+}
+
 function createWhiteTextMask(image) {
   const { width, height, data } = image;
   const baseMask = new Uint8Array(width * height);
@@ -1414,12 +1511,11 @@ function reconcileStructuredScores(answers, total) {
     .filter((index) => index >= 0);
 
   if (Number.isFinite(total) && missingIndexes.length === 1) {
-    const perfectBonus = normalizedAnswers.filter((answer) => answer.perfect).length * 100;
     const knownTotal = normalizedAnswers.reduce(
       (sum, answer) => sum + (Number.isFinite(answer.points) ? answer.points : 0),
       0,
     );
-    const missingScore = total + perfectBonus - knownTotal;
+    const missingScore = total - knownTotal;
 
     if (missingScore >= 0 && missingScore <= 100) {
       normalizedAnswers[missingIndexes[0]].points = missingScore;
@@ -1438,13 +1534,10 @@ function reconcileStructuredScores(answers, total) {
 }
 
 function calculateStructuredTotal(answers) {
-  const visibleScore = answers.reduce(
+  return answers.reduce(
     (sum, answer) => sum + (Number.isFinite(answer.points) ? answer.points : 0),
     0,
   );
-  const perfectBonus = answers.filter((answer) => answer.perfect).length * 100;
-
-  return Math.max(0, visibleScore - perfectBonus);
 }
 
 function parseScreenshotScoreValue(text, options = {}) {
