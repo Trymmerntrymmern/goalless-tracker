@@ -1761,6 +1761,54 @@ input:focus {
   line-height: 1;
 }
 
+.player-total label {
+  display: block;
+}
+
+.player-total .total-input {
+  width: 6ch;
+  max-width: 100%;
+  min-height: 0;
+  padding: 2px 0;
+  border: 0;
+  border-bottom: 1px dashed rgba(240, 192, 64, 0.5);
+  border-radius: 0;
+  color: var(--gold);
+  background: transparent;
+  font-size: 1.55rem;
+  font-weight: 800;
+  line-height: 1;
+  text-align: inherit;
+  -moz-appearance: textfield;
+}
+
+.player-total .total-input::-webkit-inner-spin-button,
+.player-total .total-input::-webkit-outer-spin-button {
+  -webkit-appearance: none;
+  margin: 0;
+}
+
+.player-total .total-input:focus {
+  border-bottom-color: var(--gold);
+  box-shadow: none;
+  background: transparent;
+}
+
+.total-reset-button {
+  margin-top: 4px;
+  padding: 0;
+  border: 0;
+  color: rgba(255, 255, 255, 0.68);
+  background: none;
+  font-size: 0.73rem;
+  text-decoration: underline;
+  cursor: pointer;
+}
+
+.total-reset-button[hidden] {
+  display: none;
+}
+
 .answers-list {
   display: grid;
   gap: 8px;

@@ -530,6 +530,7 @@ function normalizeDraft(draft, players) {
         screenshotTotal: Number.isFinite(Number(draftPlayer.screenshotTotal))
           ? Number(draftPlayer.screenshotTotal)
           : null,
+        manualTotal: isTotalValue(draftPlayer.manualTotal) ? Number(draftPlayer.manualTotal) : null,
       };
     }),
   };
@@ -543,7 +544,8 @@ function renderPlayerForms() {
     const card = fragment.querySelector(".player-card");
     const nameInput = fragment.querySelector(".player-name");
     const emailInput = fragment.querySelector(".player-email");
-    const total = fragment.querySelector(".player-total strong");
+    const totalInput = fragment.querySelector(".total-input");
+    const totalResetButton = fragment.querySelector(".total-reset-button");
     const answersList = fragment.querySelector(".answers-list");
     const saveButton = fragment.querySelector(".player-save-button");
     const screenshotInput = fragment.querySelector(".screenshot-input");
@@ -586,10 +588,29 @@ function renderPlayerForms() {
     if (Number.isFinite(Number(draftPlayer?.screenshotTotal))) {
       card.dataset.screenshotTotal = String(Number(draftPlayer.screenshotTotal));
     }
+    if (isTotalValue(draftPlayer?.manualTotal)) {
+      card.dataset.manualTotal = String(Number(draftPlayer.manualTotal));
+    }
 
-    total.textContent = String(calculateCardTotal(card));
+    updatePlayerCardTotal(card);
+
+    totalResetButton.addEventListener("click", () => {
+      clearManualTotalOverride(card);
+      updatePlayerCardTotal(card);
+      persistDraft();
+    });
 
     card.addEventListener("input", (event) => {
+      if (event.target === totalInput) {
+        // Manual total only overrides the total; individual answer points stay untouched.
+        if (totalInput.value.trim() === "") {
+          clearManualTotalOverride(card);
+        } else {
+          card.dataset.manualTotal = String(parsePoints(totalInput.value));
+        }
+        totalResetButton.hidden = card.dataset.manualTotal === undefined;
+        return;
+      }
       if (event.target.classList.contains("points-input")) {
         clearScreenshotTotalOverride(card);
         clearPerfectAnswerState(event.target.closest(".answer-row"));
@@ -780,6 +801,7 @@ async function handleScreenshotFile(file, playerIndex, card) {
     }
 
     const importedCount = applyScreenshotAnswersToCard(card, parsed.answers);
+    clearManualTotalOverride(card);
     if (Number.isFinite(parsed.total)) {
       card.dataset.screenshotTotal = String(parsed.total);
     } else {
@@ -2107,6 +2129,7 @@ function persistDraft() {
       screenshotTotal: Number.isFinite(Number(card.dataset.screenshotTotal))
         ? Number(card.dataset.screenshotTotal)
         : null,
+      manualTotal: isTotalValue(card.dataset.manualTotal) ? Number(card.dataset.manualTotal) : null,
       answers: [...card.querySelectorAll(".answer-row")].map((row) => ({
         answer: row.querySelector(".answer-input").value,
         wrong: isAnswerWrong(row),
@@ -2466,6 +2489,7 @@ function resetRoundInputs() {
 
   document.querySelectorAll(".player-card").forEach((card) => {
     clearScreenshotTotalOverride(card);
+    clearManualTotalOverride(card);
     card.querySelectorAll(".answer-row").forEach((row) => {
       setAnswerWrongState(row, false, { initial: true });
     });
@@ -2477,7 +2501,7 @@ function resetRoundInputs() {
       button.disabled = false;
     });
     setScreenshotStatus(card, "");
-    card.querySelector(".player-total strong").textContent = "0";
+    updatePlayerCardTotal(card);
   });
 
   persistDraft();
@@ -2490,6 +2514,7 @@ function clearPlayerInputs(playerIndex) {
   }
 
   clearScreenshotTotalOverride(card);
+  clearManualTotalOverride(card);
   card.querySelectorAll(".answer-input, .points-input").forEach((input) => {
     input.value = "";
     input.disabled = false;
@@ -2501,7 +2526,7 @@ function clearPlayerInputs(playerIndex) {
     button.disabled = false;
   });
   setScreenshotStatus(card, "");
-  card.querySelector(".player-total strong").textContent = "0";
+  updatePlayerCardTotal(card);
 }
 
 function upsertRound(round) {
@@ -4351,6 +4376,10 @@ function sortRounds() {
 }
 
 function calculateCardTotal(card) {
+  if (isTotalValue(card?.dataset.manualTotal)) {
+    return Number(card.dataset.manualTotal);
+  }
+
   const screenshotTotal = Number(card?.dataset.screenshotTotal);
   if (Number.isFinite(screenshotTotal)) {
     return screenshotTotal;
@@ -4363,6 +4392,10 @@ function calculateCardTotal(card) {
 }
 
 function getPlayerTotalFromCard(card, answers) {
+  if (isTotalValue(card?.dataset.manualTotal)) {
+    return Number(card.dataset.manualTotal);
+  }
+
   const screenshotTotal = Number(card?.dataset.screenshotTotal);
   return Number.isFinite(screenshotTotal) ? screenshotTotal : sumAnswers(answers);
 }
@@ -4373,6 +4406,18 @@ function clearScreenshotTotalOverride(card) {
   }
 
   delete card.dataset.screenshotTotal;
+}
+
+function clearManualTotalOverride(card) {
+  if (!card) {
+    return;
+  }
+
+  delete card.dataset.manualTotal;
+}
+
+function isTotalValue(value) {
+  return value !== null && value !== undefined && value !== "" && Number.isFinite(Number(value));
 }
 
 function clearPerfectAnswerState(row) {
@@ -4389,7 +4434,8 @@ function updatePlayerCardTotal(card) {
     return;
   }
 
-  card.querySelector(".player-total strong").textContent = String(calculateCardTotal(card));
+  card.querySelector(".total-input").value = String(calculateCardTotal(card));
+  card.querySelector(".total-reset-button").hidden = !isTotalValue(card.dataset.manualTotal);
 }
 
 function isAnswerWrong(row) {

@@ -10,7 +10,7 @@
       href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700;800;900&display=swap"
       rel="stylesheet"
     />
-    <link rel="stylesheet" href="style.css?v=stats-lab-12" />
+    <link rel="stylesheet" href="style.css?v=stats-lab-13" />
   </head>
   <body>
     <div class="app-layout">
@@ -261,8 +261,11 @@
             <input class="player-email" type="email" autocomplete="email" placeholder="name@example.com" />
           </label>
           <div class="player-total">
-            <span>Total</span>
-            <strong>0</strong>
+            <label>
+              <span>Total</span>
+              <input class="total-input" type="number" min="0" inputmode="numeric" value="0" aria-label="Total score" />
+            </label>
+            <button class="total-reset-button" type="button" hidden>Use sum</button>
           </div>
         </div>
 
@@ -320,7 +323,7 @@
           window.goallessFirebase = null;
         }
 
-        await import("./app.js?v=stats-lab-12");
+        await import("./app.js?v=stats-lab-13");
       }
 
       boot();
